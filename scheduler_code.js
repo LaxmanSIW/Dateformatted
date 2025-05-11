@@ -18,12 +18,14 @@ class EventScheduler {
      * @param {string} id - Unique identifier for the enabler job
      * @param {Object} avgStart - Average start time {hours, minutes}
      * @param {number} scheduleTime - Hour when the job is scheduled to run (24-hour format)
+     * @param {number} addDays - Number of days to add to the schedule (default is 0)
      */
-    addEnablerJob(id, avgStart, scheduleTime) {
+    addEnablerJob(id, avgStart, scheduleTime, addDays = 0) {
       this.enablerJobs.set(id, {
         id,
         avgStart,
         scheduleTime,
+        addDays,
         events: [], // List of event IDs associated with this enabler job
         estimatedStart: null // Will be calculated later
       });
@@ -258,8 +260,7 @@ class EventScheduler {
         }
       }
     }
-    
-    /**
+      /**
      * Calculate the estimated start time for an enabler job
      * @param {Object} job - The enabler job
      * @returns {Date} - Estimated start time
@@ -277,6 +278,11 @@ class EventScheduler {
       // If average start time is earlier than schedule time, it must be for the next day
       if (avgStartTime < scheduleTime) {
         avgStartTime.setDate(avgStartTime.getDate() + 1);
+      }
+      
+      // Add any additional days specified in the job configuration
+      if (job.addDays > 0) {
+        avgStartTime.setDate(avgStartTime.getDate() + job.addDays);
       }
       
       // If the calculated time is before the cycle date, use cycle date
@@ -396,11 +402,11 @@ class EventScheduler {
         enablerJobs: {},
         events: {}
       };
-      
-      for (const [id, job] of this.enablerJobs.entries()) {
+        for (const [id, job] of this.enablerJobs.entries()) {
         report.enablerJobs[id] = {
           avgStart: `${job.avgStart.hours}:${job.avgStart.minutes.toString().padStart(2, '0')}`,
           scheduleTime: job.scheduleTime,
+          addDays: job.addDays,
           estimatedStart: job.estimatedStart ? job.estimatedStart.toISOString() : null,
           events: job.events
         };
@@ -430,10 +436,10 @@ class EventScheduler {
     const currentDate = new Date();
     currentDate.setHours(9, 30, 0, 0);
     const scheduler = new EventScheduler(currentDate);
-    
-    // Add enabler jobs
-    scheduler.addEnablerJob('job1', { hours: 10, minutes: 27 }, 9); // Average start 10:27 AM, scheduled for 9 AM
-    scheduler.addEnablerJob('job2', { hours: 14, minutes: 0 }, 12); // Average start 2 PM, scheduled for 12 PM
+      // Add enabler jobs
+    scheduler.addEnablerJob('job1', { hours: 10, minutes: 27 }, 9, 0); // Average start 10:27 AM today, scheduled for 9 AM
+    scheduler.addEnablerJob('job2', { hours: 14, minutes: 0 }, 12, 1); // Average start 2 PM tomorrow, scheduled for 12 PM
+    scheduler.addEnablerJob('job3', { hours: 8, minutes: 0 }, 7, 2); // Average start 8 AM day after tomorrow, scheduled for 7 AM
     
     // Add events for job1
     scheduler.addEvent('event1', 'job1', 
