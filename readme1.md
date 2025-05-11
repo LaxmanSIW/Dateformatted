@@ -69,7 +69,8 @@ const scheduler = new EventScheduler(new Date());
 // Add an enabler job
 scheduler.addEnablerJob('job1', 
     { hours: 10, minutes: 27 }, // Average start time
-    9                          // Scheduled hour
+    9,                         // Scheduled hour (24-hour format)
+    0                         // Days to add (0 = today, 1 = tomorrow, etc.)
 );
 
 // Add an event
@@ -90,6 +91,7 @@ scheduler.addEvent(
 1. **Enabler Jobs**
    - Base jobs that enable events to start
    - Have scheduled and average start times
+   - Support scheduling for future days using `addDays` parameter
    - Can have multiple associated events
 
 2. **Events**
@@ -108,7 +110,9 @@ scheduler.addEvent(
 1. **Adding Components**
    ```javascript
    // Add enabler job
-   scheduler.addEnablerJob(id, avgStart, scheduleTime);
+   scheduler.addEnablerJob(id, avgStart, scheduleTime, addDays);
+   // Example: Schedule job for tomorrow
+   scheduler.addEnablerJob('job1', { hours: 9, minutes: 0 }, 8, 1);
    
    // Add event
    scheduler.addEvent(id, enablerJobId, avgStart, avgEnd, duration, 
@@ -177,7 +181,14 @@ formatDate(date, '[{DDDD}, {MMMM} {DD}, {YYYY} @ {hh}:{mm}:{ss} {A}]');
 const scheduler = new EventScheduler(new Date());
 
 // Set up jobs and events
-scheduler.addEnablerJob('job1', { hours: 9, minutes: 0 }, 8);
+// Schedule a job for today (addDays = 0)
+scheduler.addEnablerJob('job1', { hours: 9, minutes: 0 }, 8, 0);
+// Schedule a job for tomorrow (addDays = 1)
+scheduler.addEnablerJob('job2', { hours: 14, minutes: 0 }, 12, 1);
+// Schedule a job for the day after tomorrow (addDays = 2)
+scheduler.addEnablerJob('job3', { hours: 8, minutes: 0 }, 7, 2);
+
+// Add an event
 scheduler.addEvent('event1', 'job1', 
     { hours: 9, minutes: 30 }, 
     { hours: 10, minutes: 0 },
