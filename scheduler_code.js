@@ -344,12 +344,14 @@ class EventScheduler {
           }
         }
       }
-      
-      // Create base date for cycle day
+        // Calculate base time - use current time if we're in the same day, otherwise use cycle date
+      const now = new Date();
       const cycleDay = new Date(this.cycleDate);
       cycleDay.setHours(0, 0, 0, 0);
+      const currentDay = new Date(now);
+      currentDay.setHours(0, 0, 0, 0);
       
-      // Calculate event's average times based on cycle date
+      // Calculate event's intended average start time
       const eventAvgStart = new Date(cycleDay);
       eventAvgStart.setHours(event.avgStart.hours, event.avgStart.minutes, 0, 0);
       
@@ -357,22 +359,27 @@ class EventScheduler {
       let estimatedStart;
       
       if (event.predecessors.length === 0) {
-        // For events without predecessors, they can start after the enabler job
-        if (eventAvgStart < enablerStartTime) {
-          // Average time is before enabler job, so schedule for tomorrow
+        // For events without predecessors
+        if (cycleDay.getTime() === currentDay.getTime() && now > eventAvgStart) {
+          // If we're in the current day and average time has passed, use current time
+          estimatedStart = new Date(Math.max(now.getTime(), enablerStartTime.getTime()));
+        } else if (eventAvgStart < enablerStartTime) {
+          // If average time is before enabler job, schedule for next day
           estimatedStart = new Date(eventAvgStart);
           estimatedStart.setDate(estimatedStart.getDate() + 1);
         } else {
-          // Average time is after enabler job, so can use that
+          // Use average time if it hasn't passed yet
           estimatedStart = new Date(eventAvgStart);
         }
       } else {
-        // Events with predecessors should start after the latest predecessor
+        // Events with predecessors must consider both predecessor end times and current time
+        const baseTime = cycleDay.getTime() === currentDay.getTime() ? now : eventAvgStart;
         if (maxPredEndTime) {
-          estimatedStart = new Date(Math.max(eventAvgStart.getTime(), maxPredEndTime.getTime()));
+          // Use the latest of: current time (if same day), predecessor end time, enabler start time
+          estimatedStart = new Date(Math.max(baseTime.getTime(), maxPredEndTime.getTime(), enablerStartTime.getTime()));
         } else {
-          // If there are no valid predecessor end times, use enabler start time
-          estimatedStart = new Date(Math.max(eventAvgStart.getTime(), enablerStartTime.getTime()));
+          // If no valid predecessor times, use the latest of: current time (if same day), average time, enabler start time
+          estimatedStart = new Date(Math.max(baseTime.getTime(), enablerStartTime.getTime()));
         }
       }
       
