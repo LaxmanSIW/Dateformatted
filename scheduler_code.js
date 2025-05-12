@@ -124,58 +124,80 @@ class EventScheduler {
         estimatedEnd: event.estimatedEnd
       };
     }
-    
-    /**
-     * Get average times for events based on current date only (independent of current time)
-     * This calculates when events would run based on their average times and the current date,
-     * without considering the current time constraints
+      /**
+     * Get average times for events based only on cycle date and scheduled times 
+     * This calculates when events would typically run based on their configured times,
+     * independent of the current time or actual times
      * @returns {Object} - Map of event IDs to their average time objects
      */
     getEventsAverageTimes() {
       const result = {};
-      const today = new Date(this.cycleDate);
-      today.setHours(0, 0, 0, 0);
+      const baseDate = new Date(this.cycleDate);
+      baseDate.setHours(0, 0, 0, 0);
       
-      // First, calculate enabler job average times once
+      // First, calculate enabler job average times
       const enablerAvgTimes = new Map();
       for (const [jobId, job] of this.enablerJobs.entries()) {
-        const enablerAvgStart = new Date(today);
-        enablerAvgStart.setHours(job.avgStart.hours, job.avgStart.minutes, 0, 0);
+        // Start with base date and add any configured days offset
+        const jobBaseDate = new Date(baseDate);
+        jobBaseDate.setDate(jobBaseDate.getDate() + job.addDays);
         
-        const scheduleTime = new Date(today);
+        // Get scheduled time for reference
+        const scheduleTime = new Date(jobBaseDate);
         scheduleTime.setHours(job.scheduleTime, 0, 0, 0);
         
-        // If enabler's average start is earlier than its schedule time, it's for the next day
+        // Calculate average start time
+        const enablerAvgStart = new Date(jobBaseDate);
+        enablerAvgStart.setHours(job.avgStart.hours, job.avgStart.minutes, 0, 0);
+        
+        // If average start is before schedule time on the base date, it means
+        // this job typically runs the next day after its schedule
         if (enablerAvgStart < scheduleTime) {
           enablerAvgStart.setDate(enablerAvgStart.getDate() + 1);
         }
         
-        enablerAvgTimes.set(jobId, enablerAvgStart);
+        enablerAvgTimes.set(jobId, {
+          scheduleTime,
+          avgStart: enablerAvgStart
+        });
       }
-      
-      // Now process all events using the cached enabler times
+        // Now process all events using the enabler job times
       for (const [id, event] of this.events.entries()) {
-        const enablerAvgStart = enablerAvgTimes.get(event.enablerJobId);
+        const enablerTimes = enablerAvgTimes.get(event.enablerJobId);
+        const enablerScheduleTime = enablerTimes.scheduleTime;
+        const enablerAvgStart = enablerTimes.avgStart;
         
-        // Calculate event's average start and end times
-        const eventAvgStart = new Date(today);
+        // Get the enabler job to access its addDays value
+        const enablerJob = this.enablerJobs.get(event.enablerJobId);
+        
+        // Start with the base date and add the enabler's addDays
+        const eventBaseDate = new Date(baseDate);
+        eventBaseDate.setDate(eventBaseDate.getDate() + enablerJob.addDays);
+        
+        // Calculate event's average start time starting from the adjusted base date
+        const eventAvgStart = new Date(eventBaseDate);
         eventAvgStart.setHours(event.avgStart.hours, event.avgStart.minutes, 0, 0);
         
-        const eventAvgEnd = new Date(today);
+        // Calculate event's average end time
+        const eventAvgEnd = new Date(eventBaseDate);
         eventAvgEnd.setHours(event.avgEnd.hours, event.avgEnd.minutes, 0, 0);
         
-        // If event's average start is earlier than enabler's average start, it's for the next day
-        if (event.predecessors.length === 0 && eventAvgStart < enablerAvgStart) {
+        // If event average start is before enabler average start, move to next day
+        // This ensures events always run after their enabler job's average start time
+        if (eventAvgStart < enablerAvgStart) {
           eventAvgStart.setDate(eventAvgStart.getDate() + 1);
           eventAvgEnd.setDate(eventAvgEnd.getDate() + 1);
         }
         
-        // For events with predecessors, we would need to consider their average end times
-        // but we'll simplify this for now to just report the raw average times
+        // Handle events that span across midnight
+        if (eventAvgEnd < eventAvgStart) {
+          eventAvgEnd.setDate(eventAvgEnd.getDate() + 1);
+        }
         
         result[id] = {
           avgStart: eventAvgStart,
           avgEnd: eventAvgEnd,
+          enablerScheduleTime: enablerScheduleTime,
           enablerAvgStart: enablerAvgStart
         };
       }
