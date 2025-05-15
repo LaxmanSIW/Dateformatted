@@ -125,83 +125,80 @@ class EventScheduler {
       };
     }
       /**
-     * Get average times for events based only on cycle date and scheduled times 
-     * This calculates when events would typically run based on their configured times,
-     * independent of the current time or actual times
+     * Get average times for events based only on enabler job time and durations
+     * Ignores event avgStart/avgEnd fields
      * @returns {Object} - Map of event IDs to their average time objects
      */
     getEventsAverageTimes() {
       const result = {};
       const baseDate = new Date(this.cycleDate);
       baseDate.setHours(0, 0, 0, 0);
-      
+
       // First, calculate enabler job average times
       const enablerAvgTimes = new Map();
       for (const [jobId, job] of this.enablerJobs.entries()) {
         // Start with base date and add any configured days offset
         const jobBaseDate = new Date(baseDate);
         jobBaseDate.setDate(jobBaseDate.getDate() + job.addDays);
-        
+
         // Get scheduled time for reference
         const scheduleTime = new Date(jobBaseDate);
         scheduleTime.setHours(job.scheduleTime, 0, 0, 0);
-        
+
         // Calculate average start time
         const enablerAvgStart = new Date(jobBaseDate);
         enablerAvgStart.setHours(job.avgStart.hours, job.avgStart.minutes, 0, 0);
-        
+
         // If average start is before schedule time on the base date, it means
         // this job typically runs the next day after its schedule
         if (enablerAvgStart < scheduleTime) {
           enablerAvgStart.setDate(enablerAvgStart.getDate() + 1);
         }
-        
-        enablerAvgTimes.set(jobId, {
-          scheduleTime,
-          avgStart: enablerAvgStart
-        });
+
+        enablerAvgTimes.set(jobId, enablerAvgStart);
       }
-        // Now process all events using the enabler job times
-      for (const [id, event] of this.events.entries()) {
-        const enablerTimes = enablerAvgTimes.get(event.enablerJobId);
-        const enablerScheduleTime = enablerTimes.scheduleTime;
-        const enablerAvgStart = enablerTimes.avgStart;
-        
-        // Get the enabler job to access its addDays value
-        const enablerJob = this.enablerJobs.get(event.enablerJobId);
-        
-        // Start with the base date and add the enabler's addDays
-        const eventBaseDate = new Date(baseDate);
-        eventBaseDate.setDate(eventBaseDate.getDate() + enablerJob.addDays);
-        
-        // Calculate event's average start time starting from the adjusted base date
-        const eventAvgStart = new Date(eventBaseDate);
-        eventAvgStart.setHours(event.avgStart.hours, event.avgStart.minutes, 0, 0);
-        
-        // Calculate event's average end time
-        const eventAvgEnd = new Date(eventBaseDate);
-        eventAvgEnd.setHours(event.avgEnd.hours, event.avgEnd.minutes, 0, 0);
-        
-        // If event average start is before enabler average start, move to next day
-        // This ensures events always run after their enabler job's average start time
-        if (eventAvgStart < enablerAvgStart) {
-          eventAvgStart.setDate(eventAvgStart.getDate() + 1);
-          eventAvgEnd.setDate(eventAvgEnd.getDate() + 1);
+
+      // Now process all events using only enabler job time and durations
+      // Topological sort to respect dependencies
+      const visited = new Set();
+      const allEvents = Array.from(this.events.keys());
+      while (visited.size < this.events.size) {
+        let progress = false;
+        for (const eventId of allEvents) {
+          if (visited.has(eventId)) continue;
+          const event = this.events.get(eventId);
+          const allPredsVisited = event.predecessors.every(predId => !this.events.has(predId) || visited.has(predId));
+          if (allPredsVisited) {
+            // Calculate start time
+            let startTime;
+            if (event.predecessors.length === 0) {
+              startTime = new Date(enablerAvgTimes.get(event.enablerJobId));
+            } else {
+              let maxPredEnd = null;
+              for (const predId of event.predecessors) {
+                if (!this.events.has(predId)) continue;
+                const pred = result[predId];
+                if (pred && (!maxPredEnd || pred.avgEnd > maxPredEnd)) {
+                  maxPredEnd = new Date(pred.avgEnd);
+                }
+              }
+              const enablerTime = new Date(enablerAvgTimes.get(event.enablerJobId));
+              startTime = maxPredEnd && maxPredEnd > enablerTime ? maxPredEnd : enablerTime;
+            }
+            // End time = start + duration
+            const durationMs = (event.duration.hours * 60 * 60 * 1000) + (event.duration.minutes * 60 * 1000) + (event.duration.seconds * 1000);
+            const endTime = new Date(startTime.getTime() + durationMs);
+            result[eventId] = {
+              avgStart: startTime,
+              avgEnd: endTime,
+              enablerAvgStart: enablerAvgTimes.get(event.enablerJobId)
+            };
+            visited.add(eventId);
+            progress = true;
+          }
         }
-        
-        // Handle events that span across midnight
-        if (eventAvgEnd < eventAvgStart) {
-          eventAvgEnd.setDate(eventAvgEnd.getDate() + 1);
-        }
-        
-        result[id] = {
-          avgStart: eventAvgStart,
-          avgEnd: eventAvgEnd,
-          enablerScheduleTime: enablerScheduleTime,
-          enablerAvgStart: enablerAvgStart
-        };
+        if (!progress) break; // cycle or error
       }
-      
       return result;
     }
     
@@ -231,55 +228,32 @@ class EventScheduler {
     }
     
     /**
-     * Calculate estimated times for all events
+     * Calculate estimated times for all events (ignoring event avgStart/avgEnd, using only enabler job and durations)
      */
     calculateEstimatedTimes() {
       // First, calculate enabler job start times if not already calculated
-      // or after date change
       if (!this.enablerAvgTimesCalculated) {
         for (const [id, job] of this.enablerJobs.entries()) {
           job.estimatedStart = this._calculateEnablerJobStartTime(job);
         }
         this.enablerAvgTimesCalculated = true;
       }
-      
-      // Then, calculate event times in a topological order
-      const visitedEvents = new Set();
+      // Topological sort for events
+      const visited = new Set();
       const allEvents = Array.from(this.events.keys());
-      
-      // Process events without predecessors first, then those with predecessors
-      while (visitedEvents.size < this.events.size) {
+      while (visited.size < this.events.size) {
         let progress = false;
-        
         for (const eventId of allEvents) {
-          if (visitedEvents.has(eventId)) continue;
-          
+          if (visited.has(eventId)) continue;
           const event = this.events.get(eventId);
-          const allPredsVisited = event.predecessors.every(predId => 
-            !this.events.has(predId) || visitedEvents.has(predId)
-          );
-          
+          const allPredsVisited = event.predecessors.every(predId => !this.events.has(predId) || visited.has(predId));
           if (allPredsVisited) {
             this._calculateEventEstimatedTimes(event);
-            visitedEvents.add(eventId);
+            visited.add(eventId);
             progress = true;
           }
         }
-        
-        if (!progress) {
-          // If we didn't make progress in this iteration, there might be a cycle
-          console.warn("Possible cycle in event dependencies. Breaking calculation.");
-          
-          // Process remaining events even if their predecessors aren't all processed
-          for (const eventId of allEvents) {
-            if (!visitedEvents.has(eventId)) {
-              const event = this.events.get(eventId);
-              this._calculateEventEstimatedTimes(event);
-              visitedEvents.add(eventId);
-            }
-          }
-          break;
-        }
+        if (!progress) break;
       }
     }
       /**
@@ -316,7 +290,7 @@ class EventScheduler {
     }
     
     /**
-     * Calculate estimated start and end times for an event
+     * Calculate estimated start and end times for an event (ignoring event avgStart/avgEnd)
      * @param {Object} event - The event
      */
     _calculateEventEstimatedTimes(event) {
@@ -326,76 +300,37 @@ class EventScheduler {
         event.estimatedEnd = new Date(event.actualEnd);
         return;
       }
-      
       const enablerJob = this.enablerJobs.get(event.enablerJobId);
       const enablerStartTime = enablerJob.estimatedStart;
-      
       // Get the maximum end time of all predecessors
       let maxPredEndTime = null;
       if (event.predecessors.length > 0) {
         for (const predId of event.predecessors) {
           if (!this.events.has(predId)) continue;
-          
           const pred = this.events.get(predId);
           const predEndTime = pred.actualEnd || pred.estimatedEnd;
-          
           if (predEndTime && (!maxPredEndTime || predEndTime > maxPredEndTime)) {
             maxPredEndTime = new Date(predEndTime);
           }
         }
       }
-        // Calculate base time - use current time if we're in the same day, otherwise use cycle date
-      const now = new Date();
-      const cycleDay = new Date(this.cycleDate);
-      cycleDay.setHours(0, 0, 0, 0);
-      const currentDay = new Date(now);
-      currentDay.setHours(0, 0, 0, 0);
-      
-      // Calculate event's intended average start time
-      const eventAvgStart = new Date(cycleDay);
-      eventAvgStart.setHours(event.avgStart.hours, event.avgStart.minutes, 0, 0);
-      
       // Determine the preliminary estimated start time
       let estimatedStart;
-      
       if (event.predecessors.length === 0) {
-        // For events without predecessors
-        if (cycleDay.getTime() === currentDay.getTime() && now > eventAvgStart) {
-          // If we're in the current day and average time has passed, use current time
-          estimatedStart = new Date(Math.max(now.getTime(), enablerStartTime.getTime()));
-        } else if (eventAvgStart < enablerStartTime) {
-          // If average time is before enabler job, schedule for next day
-          estimatedStart = new Date(eventAvgStart);
-          estimatedStart.setDate(estimatedStart.getDate() + 1);
-        } else {
-          // Use average time if it hasn't passed yet
-          estimatedStart = new Date(eventAvgStart);
-        }
+        estimatedStart = new Date(enablerStartTime);
       } else {
-        // Events with predecessors must consider both predecessor end times and current time
-        const baseTime = cycleDay.getTime() === currentDay.getTime() ? now : eventAvgStart;
-        if (maxPredEndTime) {
-          // Use the latest of: current time (if same day), predecessor end time, enabler start time
-          estimatedStart = new Date(Math.max(baseTime.getTime(), maxPredEndTime.getTime(), enablerStartTime.getTime()));
-        } else {
-          // If no valid predecessor times, use the latest of: current time (if same day), average time, enabler start time
-          estimatedStart = new Date(Math.max(baseTime.getTime(), enablerStartTime.getTime()));
-        }
+        estimatedStart = maxPredEndTime && maxPredEndTime > enablerStartTime ? maxPredEndTime : enablerStartTime;
       }
-      
-      // Make sure we don't schedule anything before the cycle date
-      if (estimatedStart < this.cycleDate) {
+      // If the calculated time is in the past, use current time or cycle date (whichever is later)
+      const now = new Date();
+      if (estimatedStart < now && now > this.cycleDate) {
+        estimatedStart = new Date(now);
+      } else if (estimatedStart < this.cycleDate) {
         estimatedStart = new Date(this.cycleDate);
       }
-      
       // Calculate the estimated end time
-      const durationMs = 
-        (event.duration.hours * 60 * 60 * 1000) + 
-        (event.duration.minutes * 60 * 1000) + 
-        (event.duration.seconds * 1000);
-      
+      const durationMs = (event.duration.hours * 60 * 60 * 1000) + (event.duration.minutes * 60 * 1000) + (event.duration.seconds * 1000);
       const estimatedEnd = new Date(estimatedStart.getTime() + durationMs);
-      
       event.estimatedStart = estimatedStart;
       event.estimatedEnd = estimatedEnd;
     }
