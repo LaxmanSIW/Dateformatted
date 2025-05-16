@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-
+//const jobGraph = buildGraphFromPredGraph(predGraph, forecastData);
 const folderDetails = {
   PMMZTMLD: {
     FOLDER: 'PMMZTMLD',
@@ -57,12 +57,6 @@ const monthNames = {
 };
 
 let evJobHistoryData = {};
-
-// Example predecessor graph (fill with your real data)
-const predGraph = {
-  // 'JOBNAME': ['PRED1', 'PRED2'],
-  // ...
-};
 
 // List of jobs with DELAY SUB +1 day (use jobName or jobFolderKey if needed)
 const delaySubPlusOneDayJobs = new Set([
@@ -413,3 +407,94 @@ function convertToCSV(dataArray) {
   ];
   return csvRows.join('\n');
 }
+
+// Graph class for job dependencies
+class Graph {
+    constructor() {
+        this.adjacencyList = new Map();
+        this.reverseAdjList = new Map(); // For efficient predecessor lookups
+    }
+
+    addEdge(source, target) {
+        // Forward edge
+        if (!this.adjacencyList.has(source)) {
+            this.adjacencyList.set(source, new Set());
+        }
+        if (!this.adjacencyList.has(target)) {
+            this.adjacencyList.set(target, new Set());
+        }
+        this.adjacencyList.get(source).add(target);
+
+        // Reverse edge for predecessor lookups
+        if (!this.reverseAdjList.has(target)) {
+            this.reverseAdjList.set(target, new Set());
+        }
+        if (!this.reverseAdjList.has(source)) {
+            this.reverseAdjList.set(source, new Set());
+        }
+        this.reverseAdjList.get(target).add(source);
+    }
+
+    getDirectSuccs(vertex) {
+        return Array.from(this.adjacencyList.get(vertex) || []);
+    }
+
+    getDirectPreds(vertex) {
+        return Array.from(this.reverseAdjList.get(vertex) || []);
+    }
+
+    getAllDescendantsFurthest(root) {
+        return this.traverseGraph(root, this.adjacencyList);
+    }
+
+    getAllAncestorsFurthest(leaf) {
+        return this.traverseGraph(leaf, this.reverseAdjList);
+    }
+
+    // Helper method for graph traversal
+    traverseGraph(startVertex, adjList) {
+        const visited = new Map();
+        const queue = [{vertex: startVertex, level: 0}];
+        visited.set(startVertex, {level: 0});
+
+        while (queue.length > 0) {
+            const {vertex, level} = queue.shift();
+            const neighbors = Array.from(adjList.get(vertex) || []);
+
+            for (const neighbor of neighbors) {
+                if (!visited.has(neighbor) || visited.get(neighbor).level < level + 1) {
+                    visited.set(neighbor, {level: level + 1});
+                    queue.push({vertex: neighbor, level: level + 1});
+                }
+            }
+        }
+
+        return visited;
+    }
+}
+
+// Utility to build a Graph from a predGraph and forecastData
+function buildGraphFromPredGraph(predGraph, forecastData) {
+  const jobGraph = new Graph();
+  // For each job in forecastData, get its folder and build composite key
+  for (const jobObj of forecastData) {
+    const jobName = jobObj.JOBNAME;
+    const folderName = jobObj.APPLNAME;
+    const jobKey = jobFolderKey(jobName, folderName);
+    // If job has predecessors in predGraph
+    if (predGraph[jobName]) {
+      for (const predName of predGraph[jobName]) {
+        // Find all forecastData entries for this predecessor
+        for (const predObj of forecastData.filter(j => j.JOBNAME === predName)) {
+          const predKey = jobFolderKey(predObj.JOBNAME, predObj.APPLNAME);
+          jobGraph.addEdge(predKey, jobKey);
+        }
+      }
+    }
+  }
+  return jobGraph;
+}
+
+// Example usage:
+// const jobGraph = buildGraphFromPredGraph(predGraph, forecastData);
+// const preds = jobGraph.getDirectPreds('JOB_B__PMMZTMLD');
