@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Status Table</title>
+  <style>
+    body {
+      background: #f4f6fb;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 6px 32px rgba(0,0,0,0.10);
+      padding: 32px 24px 24px 24px;
+      position: relative;
+    }
+    h1 {
+      text-align: center;
+      color: #25324b;
+      margin-bottom: 32px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .table-responsive {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: #fff;
+      border-radius: 12px;
+      min-width: 900px;
+    }
+    thead tr {
+      background: #f7f9fc;
+    }
+    th, td {
+      padding: 14px 18px;
+      text-align: left;
+      position: relative;
+      white-space: nowrap;
+      border: none;
+    }
+    th {
+      font-weight: 600;
+      background: #f7f9fc;
+      vertical-align: middle;
+      border-bottom: 2px solid #e3e8f0;
+      transition: background 0.2s;
+      user-select: none;
+    }
+    th .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 2;
+    }
+    th:hover {
+      background: #eaf1fb;
+    }
+    th:hover .header-actions {
+      opacity: 1;
+    }
+    .header-icon {
+      width: 18px;
+      height: 18px;
+      fill: #b0b8c9;
+      cursor: pointer;
+      transition: fill 0.2s;
+      display: inline-block;
+    }
+    .header-icon:hover {
+      fill: #2d7ff9;
+    }
+    .header-sort.active {
+      fill: #2d7ff9;
+    }
+    tr {
+      transition: background 0.2s;
+    }
+    tbody tr {
+      border-bottom: 1px solid #e3e8f0;
+    }
+    tbody tr:last-child {
+      border-bottom: none;
+    }
+    td {
+      /* background: #fff; */
+      transition: background 0.2s;
+    }
+    /* td:hover {
+      background: inherit;
+    } */
+    .on-time {
+      color: #27ae60;
+      font-weight: bold;
+    }
+    .delay {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+    /* Resizer always on top and wide enough */
+    .resizer {
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 12px;
+      height: 100%;
+      cursor: col-resize;
+      user-select: none;
+      z-index: 30;
+    }
+    .reset-filters-btn {
+      display: block;
+      margin: 0 0 18px auto;
+      background: #e3e8f0;
+      color: #25324b;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 22px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .reset-filters-btn:hover {
+      background: #d1d5db;
+    }
+    .column-panel-toggle {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      z-index: 50;
+      background: #f7f9fc;
+      border: 1px solid #e3e8f0;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      transition: background 0.2s;
+    }
+    .column-panel-toggle:hover {
+      background: #eaf1fb;
+    }
+    .three-dot {
+      width: 22px;
+      height: 22px;
+      fill: #25324b;
+      display: block;
+    }
+    .column-panel {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      width: 320px;
+      min-width: 180px;
+      max-width: 90vw;
+      height: 420px;
+      background: #fff;
+      border: 1px solid #e3e8f0;
+      border-radius: 12px 0 0 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.13);
+      z-index: 100;
+      display: flex;
+      flex-direction: row;
+      transition: width 0.2s;
+      overflow: hidden;
+      resize: horizontal;
+    }
+    .column-panel.collapsed {
+      width: 48px !important;
+      min-width: 48px !important;
+      max-width: 48px !important;
+      padding: 0;
+    }
+    .column-panel-content {
+      flex: 1 1 auto;
+      padding: 18px 12px 12px 18px;
+      overflow-y: auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .column-panel-header {
+      font-weight: 700;
+      color: #25324b;
+      font-size: 1.1rem;
+      margin: 0;
+      text-align: right;
+      flex: 1 1 auto;
+    }
+    .column-panel-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      flex: 1 1 auto;
+    }
+    .column-panel-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-radius: 6px;
+      cursor: grab;
+      background: none;
+      transition: background 0.15s;
+    }
+    .column-panel-item.dragging {
+      background: #eaf1fb;
+      opacity: 0.7;
+    }
+    .column-panel-item .drag-handle {
+      width: 18px;
+      height: 18px;
+      fill: #b0b8c9;
+      cursor: grab;
+      margin-right: 2px;
+    }
+    .column-panel-item .drag-handle:active {
+      fill: #2d7ff9;
+    }
+    .column-panel-item label {
+      flex: 1 1 auto;
+      font-size: 1rem;
+      color: #25324b;
+      cursor: pointer;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .column-type {
+      font-size: 0.92em;
+      color: #888;
+      background: #f7f9fc;
+      border-radius: 4px;
+      padding: 1px 7px;
+      margin-left: 6px;
+    }
+    .column-panel-resizer {
+      width: 8px;
+      cursor: ew-resize;
+      background: transparent;
+      height: 100%;
+      position: relative;
+      z-index: 2;
+    }
+    .column-panel-resizer:hover {
+      background: #e3e8f0;
+    }
+    .column-panel-collapse {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      z-index: 3;
+    }
+    .column-panel-collapse svg {
+      width: 22px;
+      height: 22px;
+      fill: #25324b;
+    }
+    @media (max-width: 900px) {
+      .container { padding: 8px; }
+      table { min-width: 600px; }
+      th, td { padding: 10px 8px; }
+      .column-panel { height: 320px; }
+    }
+    /* Filter popup styling */
+    .filter-popup {
+      position: absolute;
+      background: #fff;
+      border: 1px solid #e3e8f0;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+      padding: 10px 12px 8px 12px;
+      z-index: 200;
+      min-width: 180px;
+      max-width: 260px;
+      display: none;
+    }
+    .filter-popup.active {
+      display: block;
+    }
+    .filter-popup label {
+      font-size: 0.98rem;
+      color: #25324b;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .filter-popup input, .filter-popup select {
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 4px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 1rem;
+      background: #f7f9fc;
+      color: #25324b;
+      outline: none;
+      box-sizing: border-box;
+    }
+    .filter-popup .filter-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .filter-popup button {
+      background: #2d7ff9;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 14px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .filter-popup button:hover {
+      background: #1a5fd7;
+    }
+    /* Collapsed column panel as a circle with three dots */
+    .column-panel.collapsed {
+      width: 48px !important;
+      min-width: 48px !important;
+      max-width: 48px !important;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      height: 48px;
+      top: 24px;
+      right: 24px;
+      z-index: 101;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .column-panel.collapsed .column-panel-collapse {
+      position: static;
+      width: 48px;
+      height: 48px;
+      background: #f7f9fc;
+      border: 1px solid #e3e8f0;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      cursor: pointer;
+      z-index: 102;
+      margin: 0;
+      padding: 0;
+      transition: background 0.2s;
+    }
+    .column-panel.collapsed .column-panel-collapse:hover {
+      background: #eaf1fb;
+    }
+    .column-panel.collapsed .three-dot {
+      width: 22px;
+      height: 22px;
+      fill: #25324b;
+      display: block;
+    }
+    /* Hide the arrow icon in collapsed state, show three-dot icon */
+    .column-panel.collapsed .three-dot {
+      display: block;
+    }
+    .column-panel.collapsed .arrow-icon {
+      display: none;
+    }
+    /* Hide content in collapsed state */
+    .column-panel.collapsed .column-panel-content {
+      display: none !important;
+    }
+    /* --- Table row hover effect on entire row --- */
+    tbody tr:hover {
+      background: #f0f4fa;
+    }
+
+    /* --- Column panel header row --- */
+    .column-panel-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #e3e8f0;
+    }
+    .column-panel-header {
+      font-weight: 700;
+      color: #25324b;
+      font-size: 1.1rem;
+      margin: 0;
+      text-align: right;
+      flex: 1 1 auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Event Status Dashboard</h1>
+    <button class="reset-filters-btn" id="resetFiltersBtn">Reset Filters</button>
+    <div class="column-panel-toggle" id="columnPanelToggle" title="Show/Hide Column Manager">
+      <svg class="three-dot" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/></svg>
+    </div>
+    <div class="table-responsive">
+      <table id="event-table">
+        <thead>
+          <tr>
+            <th data-field="event">Event Name
+              <span class="header-actions">
+                <svg class="header-icon header-sort" data-sort="event" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+                <svg class="header-icon header-gear" data-filter="event" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+              </span>
+            </th>
+            <th data-field="avgTime">Average Time
+              <span class="header-actions">
+                <svg class="header-icon header-sort" data-sort="avgTime" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+                <svg class="header-icon header-gear" data-filter="avgTime" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+              </span>
+            </th>
+            <th data-field="estTime">Estimated Time
+              <span class="header-actions">
+                <svg class="header-icon header-sort" data-sort="estTime" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+                <svg class="header-icon header-gear" data-filter="estTime" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+              </span>
+            </th>
+            <th data-field="type">Type
+              <span class="header-actions">
+                <svg class="header-icon header-sort" data-sort="type" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+                <svg class="header-icon header-gear" data-filter="type" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+              </span>
+            </th>
+            <th data-field="status">Status
+              <span class="header-actions">
+                <svg class="header-icon header-sort" data-sort="status" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+                <svg class="header-icon header-gear" data-filter="status" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+              </span>
+            </th>
+            <th data-field="onTime">Completed On Time?
+              <span class="header-actions">
+                <svg class="header-icon header-sort" data-sort="onTime" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+                <svg class="header-icon header-gear" data-filter="onTime" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+              </span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Table rows will be rendered by JS -->
+        </tbody>
+      </table>
+      <!-- Filter popups will be injected here by JS -->
+    </div>
+    <!-- Column panel will be injected here by JS -->
+  </div>
+  <script>
+    // Dummy data with ISO date-times
+    const tableData = [
+      {event: "Nightly Load", avgTime: "2024-06-10 23:45", estTime: "2024-06-10 23:40", type: "Batch", status: "Completed"},
+      {event: "Daily Report", avgTime: "2024-06-10 09:30", estTime: "2024-06-10 09:35", type: "Report", status: "Completed"},
+      {event: "Data Sync", avgTime: "2024-06-10 12:55", estTime: "2024-06-10 12:50", type: "Sync", status: "Completed"},
+      {event: "Backup", avgTime: "2024-06-10 01:00", estTime: "2024-06-10 01:00", type: "Backup", status: "Completed"},
+      {event: "User Import", avgTime: "2024-06-10 08:25", estTime: "2024-06-10 08:20", type: "Batch", status: "Completed"},
+      {event: "Archive", avgTime: "2024-06-10 03:10", estTime: "2024-06-10 03:00", type: "Batch", status: "Completed"},
+    ];
+
+    // Column definitions with type
+    let columnDefs = [
+      { field: 'event', label: 'Event Name', type: 'string', visible: true },
+      { field: 'avgTime', label: 'Average Time', type: 'date', visible: true },
+      { field: 'estTime', label: 'Estimated Time', type: 'date', visible: true },
+      { field: 'type', label: 'Type', type: 'string', visible: true },
+      { field: 'status', label: 'Status', type: 'string', visible: true },
+      { field: 'onTime', label: 'Completed On Time?', type: 'string', visible: true },
+    ];
+
+    // State for sorting and filtering
+    let sortField = null;
+    let sortAsc = true;
+    let filters = {};
+    let filterPopups = {};
+
+    // Helper to format date-time
+    function formatDateTime(dt) {
+      if (!dt) return '';
+      const d = new Date(dt.replace(' ', 'T'));
+      if (isNaN(d.getTime())) return dt;
+      return d.toISOString().slice(0,16).replace('T',' ');
+    }
+
+    // Render table rows and headers based on columnDefs
+    function renderTable() {
+      const theadRow = document.querySelector('#event-table thead tr');
+      theadRow.innerHTML = '';
+      columnDefs.forEach(col => {
+        if (!col.visible) return;
+        const th = document.createElement('th');
+        th.setAttribute('data-field', col.field);
+        th.innerHTML = `${col.label}
+          <span class="header-actions">
+            <svg class="header-icon header-sort${sortField===col.field?' active':''}" data-sort="${col.field}" viewBox="0 0 16 16"><path d="M8 5l4 4H4z"/></svg>
+            <svg class="header-icon header-gear" data-filter="${col.field}" viewBox="0 0 20 20"><path d="M10 13.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7zm7.43-3.5c0-.46-.04-.91-.1-1.35l1.7-1.33a.5.5 0 0 0 .12-.64l-1.6-2.77a.5.5 0 0 0-.6-.23l-2 .8a7.03 7.03 0 0 0-1.17-.68l-.3-2.13A.5.5 0 0 0 13 1h-3a.5.5 0 0 0-.5.42l-.3 2.13c-.41.17-.8.39-1.17.68l-2-.8a.5.5 0 0 0-.6.23l-1.6 2.77a.5.5 0 0 0 .12.64l1.7 1.33c-.06.44-.1.89-.1 1.35s.04.91.1 1.35l-1.7 1.33a.5.5 0 0 0-.12.64l1.6 2.77a.5.5 0 0 0 .6.23l2-.8c.37.29.76.51 1.17.68l.3 2.13A.5.5 0 0 0 10 19h3a.5.5 0 0 0 .5-.42l.3-2.13c.41-.17.8-.39 1.17-.68l2 .8a.5.5 0 0 0 .6-.23l1.6-2.77a.5.5 0 0 0-.12-.64l-1.7-1.33c.06-.44.1-.89.1-1.35z"/></svg>
+          </span>`;
+        theadRow.appendChild(th);
+      });
+      // Add resizers
+      document.querySelectorAll('#event-table th[data-field]').forEach(th => {
+        if (!th.querySelector('.resizer')) {
+          const resizer = document.createElement('div');
+          resizer.className = 'resizer';
+          th.appendChild(resizer);
+          let startX, startWidth;
+          resizer.addEventListener('mousedown', function(e) {
+            startX = e.pageX;
+            startWidth = th.offsetWidth;
+            document.body.style.cursor = 'col-resize';
+            function onMouseMove(e2) {
+              const newWidth = Math.max(60, startWidth + (e2.pageX - startX));
+              th.style.width = newWidth + 'px';
+            }
+            function onMouseUp() {
+              document.body.style.cursor = '';
+              window.removeEventListener('mousemove', onMouseMove);
+              window.removeEventListener('mouseup', onMouseUp);
+            }
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+          });
+        }
+      });
+      // Sorting
+      document.querySelectorAll('.header-sort').forEach(icon => {
+        icon.onclick = function(e) {
+          const field = icon.getAttribute('data-sort');
+          if (sortField === field) {
+            sortAsc = !sortAsc;
+          } else {
+            sortField = field;
+            sortAsc = true;
+          }
+          document.querySelectorAll('.header-sort').forEach(i => i.classList.remove('active'));
+          icon.classList.add('active');
+          renderTable();
+        };
+      });
+      // Filtering popups
+      document.querySelectorAll('.header-gear').forEach(gear => {
+        gear.onclick = function(e) {
+          e.stopPropagation();
+          closeAllPopups();
+          const field = gear.getAttribute('data-filter');
+          let popup = filterPopups[field];
+          if (!popup) {
+            popup = createFilterPopup(field);
+            filterPopups[field] = popup;
+            document.body.appendChild(popup);
+          }
+          // Position popup below the header cell
+          const rect = gear.closest('th').getBoundingClientRect();
+          popup.style.left = (rect.left + window.scrollX) + 'px';
+          popup.style.top = (rect.bottom + window.scrollY) + 'px';
+          popup.classList.add('active');
+        };
+      });
+      renderTableBody();
+    }
+    function renderTableBody() {
+      const tbody = document.querySelector('#event-table tbody');
+      tbody.innerHTML = '';
+      let filtered = tableData.filter(row => {
+        for (const col of columnDefs) {
+          if (!col.visible) continue;
+          if (col.field === 'event' && filters.event && !row.event.toLowerCase().includes(filters.event.toLowerCase())) return false;
+          if (col.field === 'type' && filters.type && row.type !== filters.type) return false;
+          if (col.field === 'status' && filters.status && row.status !== filters.status) return false;
+          if (col.field === 'avgTime') {
+            if (filters['avgTime-from'] && new Date(row.avgTime.replace(' ', 'T')) < new Date(filters['avgTime-from'])) return false;
+            if (filters['avgTime-to'] && new Date(row.avgTime.replace(' ', 'T')) > new Date(filters['avgTime-to'])) return false;
+          }
+          if (col.field === 'estTime') {
+            if (filters['estTime-from'] && new Date(row.estTime.replace(' ', 'T')) < new Date(filters['estTime-from'])) return false;
+            if (filters['estTime-to'] && new Date(row.estTime.replace(' ', 'T')) > new Date(filters['estTime-to'])) return false;
+          }
+          if (col.field === 'onTime' && filters.onTime) {
+            const isOnTime = new Date(row.avgTime.replace(' ', 'T')) <= new Date(row.estTime.replace(' ', 'T'));
+            if (filters.onTime === 'On Time' && !isOnTime) return false;
+            if (filters.onTime === 'Delay' && isOnTime) return false;
+          }
+        }
+        return true;
+      });
+      if (sortField) {
+        filtered.sort((a, b) => {
+          let aVal = a[sortField], bVal = b[sortField];
+          if (sortField === 'onTime') {
+            aVal = new Date(a.avgTime.replace(' ', 'T')) <= new Date(a.estTime.replace(' ', 'T')) ? 0 : 1;
+            bVal = new Date(b.avgTime.replace(' ', 'T')) <= new Date(b.estTime.replace(' ', 'T')) ? 0 : 1;
+          } else if (sortField === 'avgTime' || sortField === 'estTime') {
+            aVal = new Date(aVal.replace(' ', 'T'));
+            bVal = new Date(bVal.replace(' ', 'T'));
+          }
+          if (aVal instanceof Date && bVal instanceof Date) {
+            return sortAsc ? aVal - bVal : bVal - aVal;
+          }
+          if (typeof aVal === 'string') {
+            return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+          } else {
+            return sortAsc ? aVal - bVal : bVal - aVal;
+          }
+        });
+      }
+      for (const row of filtered) {
+        const isOnTime = new Date(row.avgTime.replace(' ', 'T')) <= new Date(row.estTime.replace(' ', 'T'));
+        const tr = document.createElement('tr');
+        let tds = '';
+        for (const col of columnDefs) {
+          if (!col.visible) continue;
+          if (col.field === 'avgTime') tds += `<td>${formatDateTime(row.avgTime)}</td>`;
+          else if (col.field === 'estTime') tds += `<td>${formatDateTime(row.estTime)}</td>`;
+          else if (col.field === 'onTime') tds += `<td><span class="${isOnTime ? 'on-time' : 'delay'}">${isOnTime ? 'On Time' : 'Delay'}</span></td>`;
+          else tds += `<td>${row[col.field]}</td>`;
+        }
+        tr.innerHTML = tds;
+        tbody.appendChild(tr);
+      }
+    }
+
+    // Filtering popups and sorting (unchanged)
+    function closeAllPopups() {
+      Object.values(filterPopups).forEach(popup => popup.classList.remove('active'));
+    }
+    function createFilterPopup(field) {
+      const popup = document.createElement('div');
+      popup.className = 'filter-popup';
+      let html = '';
+      const col = columnDefs.find(c => c.field === field);
+      if (col.type === 'string') {
+        html += `<label>${col.label}</label><input type="text" value="${filters[field] || ''}" />`;
+      } else if (col.type === 'date') {
+        html += `<label>${col.label}</label><input type="datetime-local" value="${filters[field+'-from']||''}" placeholder="From" style="margin-bottom:4px;" /><input type="datetime-local" value="${filters[field+'-to']||''}" placeholder="To" />`;
+      } else if (field === 'onTime') {
+        html += `<label>Completed On Time?</label><select><option value="">All</option><option value="On Time">On Time</option><option value="Delay">Delay</option></select>`;
+      } else if (field === 'type') {
+        html += `<label>Type</label><select><option value="">All</option><option value="Batch">Batch</option><option value="Report">Report</option><option value="Sync">Sync</option><option value="Backup">Backup</option></select>`;
+      } else if (field === 'status') {
+        html += `<label>Status</label><select><option value="">All</option><option value="Completed">Completed</option></select>`;
+      }
+      html += `<div class="filter-actions"><button type="button" class="apply-btn">Apply</button><button type="button" class="clear-btn">Clear</button></div>`;
+      popup.innerHTML = html;
+      // Event listeners for popup
+      popup.querySelector('.apply-btn').onclick = function() {
+        if (col.type === 'string') {
+          filters[field] = popup.querySelector('input').value;
+        } else if (col.type === 'date') {
+          filters[field+'-from'] = popup.querySelectorAll('input')[0].value;
+          filters[field+'-to'] = popup.querySelectorAll('input')[1].value;
+        } else if (field === 'onTime' || field === 'type' || field === 'status') {
+          filters[field] = popup.querySelector('select').value;
+        }
+        renderTable();
+        popup.classList.remove('active');
+      };
+      popup.querySelector('.clear-btn').onclick = function() {
+        if (col.type === 'string') {
+          filters[field] = '';
+          popup.querySelector('input').value = '';
+        } else if (col.type === 'date') {
+          filters[field+'-from'] = '';
+          filters[field+'-to'] = '';
+          popup.querySelectorAll('input')[0].value = '';
+          popup.querySelectorAll('input')[1].value = '';
+        } else if (field === 'onTime' || field === 'type' || field === 'status') {
+          filters[field] = '';
+          popup.querySelector('select').value = '';
+        }
+        renderTable();
+        popup.classList.remove('active');
+      };
+      popup.onclick = function(e) { e.stopPropagation(); };
+      return popup;
+    }
+
+    // Column resizing
+    function setupResizers() {
+      document.querySelectorAll('#event-table th[data-field]').forEach(th => {
+        if (!th.querySelector('.resizer')) {
+          const resizer = document.createElement('div');
+          resizer.className = 'resizer';
+          th.appendChild(resizer);
+          let startX, startWidth;
+          resizer.addEventListener('mousedown', function(e) {
+            startX = e.pageX;
+            startWidth = th.offsetWidth;
+            document.body.style.cursor = 'col-resize';
+            function onMouseMove(e2) {
+              const newWidth = Math.max(60, startWidth + (e2.pageX - startX));
+              th.style.width = newWidth + 'px';
+            }
+            function onMouseUp() {
+              document.body.style.cursor = '';
+              window.removeEventListener('mousemove', onMouseMove);
+              window.removeEventListener('mouseup', onMouseUp);
+            }
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+          });
+        }
+      });
+    }
+
+    // Reset Filters button
+    document.getElementById('resetFiltersBtn').onclick = function() {
+      filters = {};
+      renderTable();
+      closeAllPopups();
+    };
+
+    // Column panel logic
+    let columnPanel = null;
+    let isPanelOpen = false;
+    let panelWidth = 320;
+    const columnPanelToggle = document.getElementById('columnPanelToggle');
+    function renderColumnPanel() {
+      // Remove any existing panel
+      if (columnPanel) {
+        columnPanel.remove();
+        columnPanel = null;
+      }
+      // Only show the panel if it's open (expanded)
+      if (!isPanelOpen) {
+        // Always show the floating button
+        return;
+      }
+      // Panel is open (expanded)
+      columnPanel = document.createElement('div');
+      columnPanel.className = 'column-panel';
+      columnPanel.style.width = panelWidth + 'px';
+      // Collapse/expand button (always three-dot icon)
+      const collapseBtn = document.createElement('button');
+      collapseBtn.className = 'column-panel-collapse';
+      collapseBtn.innerHTML = `<svg class="three-dot" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/></svg>`;
+      collapseBtn.onclick = function() {
+        // Collapse: remove the panel from DOM, show only the floating button
+        isPanelOpen = false;
+        renderColumnPanel();
+      };
+      columnPanel.appendChild(collapseBtn);
+      const resizer = document.createElement('div');
+      resizer.className = 'column-panel-resizer';
+      resizer.onmousedown = function(e) {
+        e.preventDefault();
+        let startX = e.pageX;
+        let startWidth = panelWidth;
+        function onMouseMove(e2) {
+          panelWidth = Math.max(180, Math.min(600, startWidth - (e2.pageX - startX)));
+          columnPanel.style.width = panelWidth + 'px';
+        }
+        function onMouseUp() {
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+        }
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+      };
+      columnPanel.appendChild(resizer);
+      // Content
+      const content = document.createElement('div');
+      content.className = 'column-panel-content';
+      content.innerHTML = `<div class="column-panel-header-row"><div class="column-panel-header">Columns</div></div>`;
+      // List
+      const ul = document.createElement('ul');
+      ul.className = 'column-panel-list';
+      columnDefs.forEach((col, idx) => {
+        const li = document.createElement('li');
+        li.className = 'column-panel-item';
+        li.setAttribute('draggable', 'true');
+        li.setAttribute('data-idx', idx);
+        li.innerHTML = `
+          <svg class="drag-handle" viewBox="0 0 20 20"><rect x="4" y="6" width="12" height="2" rx="1"/><rect x="4" y="12" width="12" height="2" rx="1"/></svg>
+          <input type="checkbox" ${col.visible ? 'checked' : ''} />
+          <label>${col.label}<span class="column-type">${col.type}</span></label>
+        `;
+        // Checkbox show/hide
+        li.querySelector('input[type=checkbox]').onchange = function() {
+          col.visible = this.checked;
+          renderTable();
+        };
+        // Drag and drop
+        li.ondragstart = function(e) {
+          li.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', idx);
+        };
+        li.ondragend = function() {
+          li.classList.remove('dragging');
+        };
+        li.ondragover = function(e) {
+          e.preventDefault();
+          li.style.background = '#eaf1fb';
+        };
+        li.ondragleave = function() {
+          li.style.background = '';
+        };
+        li.ondrop = function(e) {
+          e.preventDefault();
+          li.style.background = '';
+          const fromIdx = +e.dataTransfer.getData('text/plain');
+          const toIdx = idx;
+          if (fromIdx !== toIdx) {
+            const moved = columnDefs.splice(fromIdx, 1)[0];
+            columnDefs.splice(toIdx, 0, moved);
+            renderTable();
+            renderColumnPanel();
+          }
+        };
+        ul.appendChild(li);
+      });
+      content.appendChild(ul);
+      columnPanel.appendChild(content);
+      document.body.appendChild(columnPanel);
+    }
+    // Toggle panel
+    columnPanelToggle.onclick = function() {
+      isPanelOpen = true;
+      renderColumnPanel();
+    };
+
+    // Initial render
+    renderTable();
+    renderColumnPanel();
+  </script>
+</body>
+</html> 
