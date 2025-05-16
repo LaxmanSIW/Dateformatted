@@ -1,0 +1,415 @@
+const fs = require('fs');
+const path = require('path');
+
+const folderDetails = {
+  PMMZTMLD: {
+    FOLDER: 'PMMZTMLD',
+    EVENT: 'TBCPRD.PMMZTMLD',
+    hh: 8,
+    mm: 0,
+    EVENT_TYPE: 'CYC'
+  },
+  PMMZTRSD: {
+    FOLDER: 'PMMZTRSD',
+    EVENT: 'TBCPRD.PMMZTRSD',
+    hh: 8,
+    mm: 0,
+    EVENT_TYPE: 'CYC'
+  },
+  PWPCTMPL: {
+    FOLDER: 'PWPCTMPL',
+    EVENT: 'TBCPRD.PWPCTMPL',
+    hh: 8,
+    mm: 0,
+    EVENT_TYPE: 'CYC'
+  },
+  PMMZTMPL: {
+    FOLDER: 'PMMZTMPL',
+    EVENT: 'TBCPRD.PMMZTMPL',
+    hh: 8,
+    mm: 0,
+    EVENT_TYPE: 'CYC'
+  },
+  PWMZTRSD: {
+    FOLDER: 'PWMZTRSD',
+    EVENT: 'TBCPRD.PWMZTRSD',
+    hh: 8,
+    mm: 0,
+    EVENT_TYPE: 'CYC'
+  }
+};
+
+const foldersToFilter = new Set(["PMMZTMLD", "PMMZTRSD", "PWPCTMPL"]);
+const notForcastedFolder = new Set(["PCPAACHD", "PCPADT9D", "PCPAEA2R", "PCPAEF"]);
+const monthNames = {
+  1: "JAN",
+  2: "FEB",
+  3: "MAR",
+  4: "APR",
+  5: "MAY",
+  6: "JUN",
+  7: "JUL",
+  8: "AUG",
+  9: "SEP",
+  10: "OCT",
+  11: "NOV",
+  12: "DEC"
+};
+
+let evJobHistoryData = {};
+
+// Example predecessor graph (fill with your real data)
+const predGraph = {
+  // 'JOBNAME': ['PRED1', 'PRED2'],
+  // ...
+};
+
+// List of jobs with DELAY SUB +1 day (use jobName or jobFolderKey if needed)
+const delaySubPlusOneDayJobs = new Set([
+  // 'JOBNAME',
+  // or 'JOBNAME__FOLDERNAME',
+]);
+
+// Helper to create a composite key for job and folder
+function jobFolderKey(jobName, folderName) {
+  return `${jobName}__${folderName}`;
+}
+
+// Propagate latest eligible time for all jobs (excluding cyclic jobs)
+function computeLatestEligible(forecastData, predGraph) {
+  let latestEligible = {};
+  // 1. Initialize
+  for (const job of forecastData) {
+    const key = jobFolderKey(job.JOBNAME, job.APPLNAME);
+    // Only initialize for non-cyclic jobs
+    const fDeatils = folderDetails[job.APPLNAME];
+    const isCyclic = fDeatils && fDeatils.EVENT_TYPE === 'CYC';
+    if (!isCyclic) {
+      if (!job.DATE) {
+        console.warn('Warning: Missing DATE for job:', job);
+      }
+      latestEligible[key] = parseForecastDate(job.DATE);
+    }
+  }
+  // 2. Propagate
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const job in predGraph) {
+      for (const pred of predGraph[job] || []) {
+        // pred and job are job names; need to check all folder combos
+        for (const jobObj of forecastData.filter(j => j.JOBNAME === job)) {
+          const jobKey = jobFolderKey(jobObj.JOBNAME, jobObj.APPLNAME);
+          const fDeatils = folderDetails[jobObj.APPLNAME];
+          const isCyclic = fDeatils && fDeatils.EVENT_TYPE === 'CYC';
+          if (isCyclic) continue; // skip cyclic jobs
+          for (const predObj of forecastData.filter(j => j.JOBNAME === pred)) {
+            const predKey = jobFolderKey(predObj.JOBNAME, predObj.APPLNAME);
+            if (latestEligible[predKey] && latestEligible[jobKey]) {
+              const maxTime = new Date(Math.max(latestEligible[jobKey], latestEligible[predKey]));
+              if (maxTime > latestEligible[jobKey]) {
+                latestEligible[jobKey] = maxTime;
+                changed = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return latestEligible;
+}
+
+main();
+
+async function main() {
+  await getFileData("inputEVHistorynew.csv").then(data => {
+    const rawDataArray = convertCsvToArrayOfObj(data);
+    evJobHistoryData = processEVDumpData(rawDataArray, 28);
+    // console.log(getNotForcatsedJobs(rawDataArray, 28));
+  });
+
+  await getFileData("inputforcastpart2.csv").then(data => {
+    const rawDataArray = convertCsvToArrayOfObj(data);
+    const processdata = processForcastData(rawDataArray);
+    console.log(convertToCSV(processdata));
+  });
+}
+
+function getFileData(fileName) {
+  const inputEvDumpFilePath = path.join(__dirname, fileName);
+  return new Promise((resolve, reject) => {
+    fs.readFile(inputEvDumpFilePath, 'utf8', (err, data) => {
+      if (err) {
+        console.error("Error while reading file...");
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
+  });
+}
+
+function convertCsvToArrayOfObj(data) {
+  const output = [];
+  const rows = data.trim().split("\n");
+  const headers = rows[0].split(",").map(h => h.replace('\r', ''));
+  for (let i = 1; i < rows.length; i++) {
+    let obj = {};
+    const columns = rows[i].split(",");
+    columns.forEach((value, index) => {
+      obj[headers[index]] = value.trim().replace('\r', '');
+    });
+    output.push(obj);
+  }
+  return output;
+}
+
+function parseForecastDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') {
+    console.warn('Warning: Invalid or missing DATE string:', dateStr);
+    // Return a far-future date to avoid matching any history
+    return new Date('2100-01-01T00:00:00');
+  }
+  // Expects format: "HH.MM DDMMM" (e.g., "23.59 16MAY")
+  const [time, dayMonth] = dateStr.split(' ');
+  const [hh, mm] = time.split('.').map(Number);
+  const day = parseInt(dayMonth.substring(0, 2));
+  const monthStr = dayMonth.substring(2, 5).toUpperCase();
+  let month = Object.values(monthNames).indexOf(monthStr) + 1;
+  if (month === 0) month = 1; // fallback to January if not found
+  // Year is not in the string, so default to 2025 as in your code
+  return new Date(2025, month - 1, day, hh, mm, 0);
+}
+
+// Modified getCycleDate to support DELAY SUB +1 day
+function getCycleDate(forecastDate, scheduledTime, isCyclic, isDelaySubPlusOneDay) {
+  if (!scheduledTime || scheduledTime.hh == null || scheduledTime.mm == null) return forecastDate;
+  if (isCyclic) {
+    // For cyclic jobs, cycle date is the eligible date as given, but time is scheduled time
+    return new Date(
+      forecastDate.getFullYear(),
+      forecastDate.getMonth(),
+      forecastDate.getDate(),
+      scheduledTime.hh,
+      scheduledTime.mm,
+      0
+    );
+  }
+  if (isDelaySubPlusOneDay) {
+    // Always previous day at scheduled time
+    const prevDay = new Date(forecastDate);
+    prevDay.setDate(prevDay.getDate() - 1);
+    return new Date(
+      prevDay.getFullYear(),
+      prevDay.getMonth(),
+      prevDay.getDate(),
+      scheduledTime.hh,
+      scheduledTime.mm,
+      0
+    );
+  }
+  const eligibleMinutes = forecastDate.getHours() * 60 + forecastDate.getMinutes();
+  const scheduledMinutes = scheduledTime.hh * 60 + scheduledTime.mm;
+  if (eligibleMinutes >= scheduledMinutes) {
+    // Same day, use scheduled time
+    return new Date(
+      forecastDate.getFullYear(),
+      forecastDate.getMonth(),
+      forecastDate.getDate(),
+      scheduledTime.hh,
+      scheduledTime.mm,
+      0
+    );
+  } else {
+    // Previous day, use scheduled time
+    const prevDay = new Date(forecastDate);
+    prevDay.setDate(prevDay.getDate() - 1);
+    return new Date(
+      prevDay.getFullYear(),
+      prevDay.getMonth(),
+      prevDay.getDate(),
+      scheduledTime.hh,
+      scheduledTime.mm,
+      0
+    );
+  }
+}
+
+function processForcastData(dataArray) {
+  let outputArray = [];
+  // Compute latest eligible for all jobs first
+  const latestEligible = computeLatestEligible(dataArray, predGraph);
+  dataArray.forEach(dataObj => {
+    let folderName = dataObj["APPLNAME"];
+    let jobName = dataObj["JOBNAME"];
+    if (!foldersToFilter.has(folderName)) return; // to filter
+    if (/\.LI\d{4}$/.test(jobName)) return; // skip all jobs
+    let fDeatils = folderDetails[folderName];
+    let forecastDate = parseForecastDate(dataObj["DATE"]);
+    let isCyclic = fDeatils && fDeatils.EVENT_TYPE === 'CYC';
+    let scheduledTime = fDeatils ? { hh: fDeatils.hh, mm: fDeatils.mm } : null;
+    // Check if job is in DELAY SUB +1 day list
+    const jobKey = jobFolderKey(jobName, folderName);
+    const isDelaySubPlusOneDay = delaySubPlusOneDayJobs.has(jobName) || delaySubPlusOneDayJobs.has(jobKey);
+    let cycleDate = getCycleDate(forecastDate, scheduledTime, isCyclic, isDelaySubPlusOneDay);
+    dataObj["CycleDate"] = cycleDate.toISOString();
+    dataObj["EVENT_TYPE"] = fDeatils ? fDeatils["EVENT_TYPE"] : '';
+    // For cyclic jobs, TRUE_ELIGIBLE_DATE is just the forecast date
+    // For others, use propagated value
+    let trueEligibleDate;
+    if (isCyclic) {
+      trueEligibleDate = forecastDate;
+      dataObj["TRUE_ELIGIBLE_DATE"] = forecastDate.toISOString();
+    } else {
+      trueEligibleDate = latestEligible[jobKey] || forecastDate;
+      dataObj["TRUE_ELIGIBLE_DATE"] = trueEligibleDate.toISOString();
+    }
+    // --- Mapping to history logic ---
+    let jobHistory = evJobHistoryData[jobName + '__' + folderName] || evJobHistoryData[jobName] || [];
+    // Find all runs on or after TRUE_ELIGIBLE_DATE, within 2 days
+    let eligibleRuns = jobHistory.filter(run => {
+      let runStart = new Date(run["Start"]);
+      return runStart >= trueEligibleDate && runStart < new Date(trueEligibleDate.getTime() + 2 * 24 * 60 * 60 * 1000);
+    });
+    // Pick the earliest run
+    eligibleRuns.sort((a, b) => new Date(a["Start"]) - new Date(b["Start"]));
+    if (eligibleRuns.length > 0) {
+      dataObj["START_DATE"] = dateFormate(eligibleRuns[0]["Start"]);
+      dataObj["END_DATE"] = dateFormate(eligibleRuns[0]["End"]);
+    } else {
+      dataObj["START_DATE"] = '';
+      dataObj["END_DATE"] = '';
+    }
+    outputArray.push(dataObj);
+  });
+  return outputArray;
+}
+
+function processEVDumpData(dataArray, daysToadd = 0) {
+  const outputObj = {};
+  dataArray.forEach(dataObj => {
+    // ...
+  });
+  return outputObj;
+}
+
+function getDateTime(JobHistory, keydate, fhh, fmm, sameday) {
+  let date = false;
+  let dateArray = JobHistory?.[keydate];
+  if (dateArray) {
+    dateArray.sort((a, b) => {
+      new Date(a["Start"]) - new Date(b["End"])
+    }).some(dateObj => {
+      let startDate = new Date(dateObj["Start"]);
+      let hhh = startDate.getHours();
+      let hmm = startDate.getMinutes();
+      let hdate = new Date().setHours(hhh, hmm, 0);
+      let fdate = new Date().setHours(fhh, fmm, 0);
+      if (hdate >= fdate && sameday) {
+        date = dateObj;
+        return true;
+      } else if (hdate < fdate && !sameday) {
+        date = dateObj;
+        return true;
+      }
+    });
+    return date;
+  } else {
+    return false;
+  }
+}
+
+function dateFormate(datearg) {
+  let date = new Date(datearg);
+  let year = date.getFullYear();
+  let month = String(date.getMonth() + 1).padStart(2, '0');
+  let day = String(date.getDate()).padStart(2, '0');
+  let hh = String(date.getHours()).padStart(2, '0');
+  let mm = String(date.getMinutes()).padStart(2, '0');
+  // let ss = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hh}:${mm}:00`;
+}
+
+function getNotForcatsedJobs(dataArray, daysToadd) {
+  let csvData = "JOBNAME, TYPE, AVG_TIME, APPLNAME, DATE, EVENT, SCHED, Eve";
+  dataArray.forEach(dataObj => {
+    let jobName = dataObj["JOB_NAME_LONG"];
+    let folder = dataObj["SCHEDULE"];
+    let startDate = new Date(dataObj["JOB_STRT_RUN_TS"].replace(" ", "T"));
+    startDate.setDate(startDate.getDate() + daysToadd);
+    let endDate = new Date(dataObj["JOB_END_RUN_TS"].replace(" ", "T"));
+    endDate.setDate(endDate.getDate() + daysToadd);
+    if (notForcastedFolder.has(folder)) return;
+    csvData += `${jobName},,,${folder},,${folderDetails?.[folder]}\n`;
+  });
+  return csvData;
+}
+
+// Example/test runner
+function runExample() {
+  // Sample forecast data
+  const forecastData = [
+    {
+      JOBNAME: 'JOB_A',
+      APPLNAME: 'PMMZTMLD',
+      DATE: '09.00 16MAY',
+    },
+    {
+      JOBNAME: 'JOB_B',
+      APPLNAME: 'PMMZTMLD',
+      DATE: '10.00 16MAY',
+    },
+    {
+      JOBNAME: 'JOB_C', // Cyclic job
+      APPLNAME: 'PMMZTRSD',
+      DATE: '08.00 16MAY',
+    },
+    {
+      JOBNAME: 'JOB_D', // DELAY SUB +1 day
+      APPLNAME: 'PMMZTMLD',
+      DATE: '07.00 17MAY',
+    },
+  ];
+
+  // Sample history data
+  evJobHistoryData = {
+    'JOB_A__PMMZTMLD': [
+      { Start: '2025-05-16T09:05:00', End: '2025-05-16T09:30:00' },
+      { Start: '2025-05-17T09:10:00', End: '2025-05-17T09:40:00' },
+    ],
+    'JOB_B__PMMZTMLD': [
+      { Start: '2025-05-16T10:10:00', End: '2025-05-16T10:30:00' },
+    ],
+    'JOB_C__PMMZTRSD': [
+      { Start: '2025-05-16T08:00:00', End: '2025-05-16T08:20:00' },
+    ],
+    'JOB_D__PMMZTMLD': [
+      { Start: '2025-05-17T07:10:00', End: '2025-05-17T07:40:00' },
+      { Start: '2025-05-16T08:00:00', End: '2025-05-16T08:30:00' },
+    ],
+  };
+
+  // Set up predGraph and delaySubPlusOneDayJobs for the test
+  predGraph['JOB_B'] = ['JOB_A']; // JOB_B depends on JOB_A
+  delaySubPlusOneDayJobs.add('JOB_D');
+  delaySubPlusOneDayJobs.add('JOB_D__PMMZTMLD');
+
+  // Run the mapping
+  const result = processForcastData(forecastData);
+  console.log('Run Example Result:');
+  console.table(result);
+}
+
+// Uncomment to run the example
+runExample();
+
+function convertToCSV(dataArray) {
+  if (!dataArray || dataArray.length === 0) return '';
+  const headers = Object.keys(dataArray[0]);
+  const csvRows = [
+    headers.join(','),
+    ...dataArray.map(row => headers.map(h => `"${(row[h] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+  ];
+  return csvRows.join('\n');
+}
