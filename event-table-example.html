@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Table Example</title>
+  <link rel="stylesheet" href="event-table.css">
+</head>
+<body>
+  <!-- Container where the event table will be initialized -->
+  <div id="eventTableContainer"></div>
+
+  <script src="event-table.js"></script>
+  <script>
+    // Sample data
+    const sampleData = [
+      {event: "Nightly Load", avgTime: "2024-06-10 23:45", estTime: "2024-06-10 23:40", type: "Batch", status: "Completed", priority: "High"},
+      {event: "Daily Report", avgTime: "2024-06-10 09:30", estTime: "2024-06-10 09:35", type: "Report", status: "Completed", priority: "Medium"},
+      {event: "Data Sync", avgTime: "2024-06-10 12:55", estTime: "2024-06-10 12:50", type: "Sync", status: "Completed", priority: "High"},
+      {event: "Backup", avgTime: "2024-06-10 01:00", estTime: "2024-06-10 01:00", type: "Backup", status: "Completed", priority: "Low"},
+      {event: "User Import", avgTime: "2024-06-10 08:25", estTime: "2024-06-10 08:20", type: "Batch", status: "Completed", priority: "Medium"},
+      {event: "Archive", avgTime: "2024-06-10 03:10", estTime: "2024-06-10 03:00", type: "Batch", status: "Completed", priority: "Low"},
+    ];
+
+    // Initialize the event table
+    const eventTable = new EventTable('eventTableContainer', sampleData);
+  </script>
+</body>
+</html>
