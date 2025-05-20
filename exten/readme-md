@@ -1,0 +1,77 @@
+# Splunk Node.js Client
+
+This project converts a Chrome extension Splunk client to run in Node.js with minimal code changes.
+
+## Features
+
+- Drop-in replacement for Chrome's storage and messaging APIs
+- File-based storage that persists between runs
+- EventEmitter-based messaging system
+- Compatible with existing Chrome extension code
+
+## Installation
+
+1. Clone this repository or extract the files
+2. Install dependencies:
+
+```bash
+npm install
+```
+
+## Usage
+
+### Option 1: Using Chrome API replacement directly
+
+The easiest way to use this is to import the Chrome API replacement at the top of your code:
+
+```javascript
+import './chrome.js'; // This makes chrome.storage and chrome.runtime available globally
+import { SplunkClient } from './SplunkClient.js';
+
+// Your original Chrome extension code with minimal changes
+// Use chrome.storage.local.get, chrome.storage.local.set, and chrome.runtime.sendMessage as normal
+```
+
+### Option 2: Direct usage of replacement APIs
+
+If you prefer to use the replacement APIs directly:
+
+```javascript
+import { SplunkClient, StorageAPI, MessageAPI } from './SplunkClient.js';
+
+// Create instances
+const storage = new StorageAPI('./your-storage-file.json');
+const messaging = new MessageAPI();
+
+// Use them directly
+storage.get(['key'], (result) => {
+  console.log(result);
+});
+
+messaging.sendMessage({ action: 'yourAction' }, (response) => {
+  console.log(response);
+});
+```
+
+## Files
+
+- `SplunkClient.js` - Contains the SplunkClient class and API replacements
+- `chrome.js` - Creates global `chrome` object that mimics Chrome's API
+- `index.js` - Example using the Chrome-like API
+- `example.js` - Simpler example showing how to use with minimal changes
+
+## Running the Examples
+
+```bash
+# Run the index.js example
+npm start
+
+# Or run the simple example
+node example.js
+```
+
+## Important Notes
+
+- Set real credentials before trying to authenticate
+- The storage is saved to disk in JSON format (default: `./storage.json`)
+- All async Chrome API calls are supported with callbacks
