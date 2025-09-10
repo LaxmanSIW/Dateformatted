@@ -1,0 +1,123 @@
+param(
+    [string]$LogFile = "C:\Logs\filezilla.log",
+    [string]$TargetDir = "/frombfm/Archive",
+    [int]$MaxDegreeOfParallelism = [Environment]::ProcessorCount
+)
+
+# ---- Configure groups here: groupName => array of regex patterns (regex, case-insensitive) ----
+$groups = @{
+    "Invoices" = @("INV_\d{8}\.csv$",".*\.xml$")
+    "Backups"  = @(".*\.tar\.gz$","^backup_.*\.zip$")
+}
+# -----------------------------------------------------------------------------------------------
+
+if (-not (Test-Path $LogFile)) { Write-Error "Log file not found: $LogFile"; exit 1 }
+
+# ---------- Step 1: Extract file listing lines for the target directory ----------
+$files = [System.Collections.Generic.List[object]]::new()
+$inside = $false
+$targetEscaped = [regex]::Escape($TargetDir)
+
+foreach ($rawLine in [System.IO.File]::ReadLines($LogFile)) {
+    # normalize line (remove leading '< ' or '> ' that may appear in FileZilla logs)
+    $line = $rawLine -replace '^[<>]\s*',''
+    if (-not $inside) {
+        if ($line -match "Listing directory\s+$targetEscaped") {
+            $inside = $true
+            continue
+        }
+    } else {
+        # stop if next listing starts
+        if ($line -match '^\s*Listing directory\b') { break }
+
+        # typical ls -l style row begins with permission bits: -rw-r--r-- or drwxr-xr-x etc.
+        if ($line -match '^\s*[-dlpscb]') {
+            $parts = $line -split '\s+'
+            if ($parts.Length -ge 9) {
+                # unix ls -l assumed: perms, links, owner, group, size, month, day, time/year, name...
+                $size = 0
+                [long]::TryParse($parts[4], [ref]$size) | Out-Null
+                $month = $parts[5]; $day = $parts[6]; $timeOrYear = $parts[7]
+                $name = ($parts[8..($parts.Length-1)] -join ' ')
+                $files.Add([PSCustomObject]@{
+                    FileName = $name
+                    Size     = $size
+                    Modified = "$month $day $timeOrYear"
+                    RawLine  = $line
+                })
+            }
+        }
+    }
+}
+
+if ($files.Count -eq 0) {
+    Write-Host "No files found for $TargetDir in $LogFile"
+    exit 0
+}
+
+# ---------- Step 2: prepare flat list of (Group,Pattern) pairs ----------
+$patternList = @()
+foreach ($g in $groups.GetEnumerator()) {
+    foreach ($p in $g.Value) {
+        $patternList += [PSCustomObject]@{ Group = $g.Name; Pattern = $p }
+    }
+}
+
+# ---------- Step 3: perform matching (parallel on PS7+, optimized sequential on older PS) ----------
+$results = @()
+
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    # PowerShell 7+ - use ForEach-Object -Parallel (runspaces) - returns objects back to main process
+    $results = $patternList | ForEach-Object -Parallel {
+        param($entry)
+        $out = @()
+        foreach ($f in $using:files) {
+            if ([regex]::IsMatch($f.FileName, $entry.Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                $out += [PSCustomObject]@{
+                    Group = $entry.Group
+                    Pattern = $entry.Pattern
+                    FileName = $f.FileName
+                    Size = $f.Size
+                    Modified = $f.Modified
+                }
+            }
+        }
+        $out
+    } -ThrottleLimit $MaxDegreeOfParallelism
+} else {
+    # PowerShell 5.1 or older - compile regexes and run sequentially (compiled regex is much faster for many matches)
+    foreach ($entry in $patternList) {
+        $rx = New-Object System.Text.RegularExpressions.Regex($entry.Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled)
+        foreach ($f in $files) {
+            if ($rx.IsMatch($f.FileName)) {
+                $results += [PSCustomObject]@{
+                    Group = $entry.Group
+                    Pattern = $entry.Pattern
+                    FileName = $f.FileName
+                    Size = $f.Size
+                    Modified = $f.Modified
+                }
+            }
+        }
+    }
+}
+
+# ---------- Step 4: print grouped result: Group -> Pattern -> matched files ----------
+if (-not $results) {
+    Write-Host "No matches found for configured groups/patterns."
+    exit 0
+}
+
+$results | Group-Object -Property Group | ForEach-Object {
+    $groupName = $_.Name
+    Write-Host "=== Group: $groupName ==="
+    ($_.Group | Group-Object -Property Pattern) | ForEach-Object {
+        $pattern = $_.Name
+        $count = ($_.Group).Count
+        Write-Host " Pattern: $pattern -> $count matches"
+        foreach ($m in $_.Group) {
+            Write-Host "   $($m.FileName) | size: $($m.Size) | modified: $($m.Modified)"
+        }
+    }
+    Write-Host ""
+}
