@@ -1,123 +1,285 @@
-param(
-    [string]$LogFile = "C:\Logs\filezilla.log",
-    [string]$TargetDir = "/frombfm/Archive",
-    [int]$MaxDegreeOfParallelism = [Environment]::ProcessorCount
+# This script reads our FileZilla SFTP log, finds the file list, groups files by patterns,
+# shows a simple table for each group (with percent difference), and can also make a pretty HTML page.
+
+# Configuration (these are the knobs you can turn)
+# Where the log file lives
+$LogPath = Join-Path -Path $PSScriptRoot -ChildPath 'filezilla_dummy.log'
+# How many days to include (0 means include everything we find)
+$DaysToProcess = 0            # 0 = all days
+# How we handle speed/parallel work (Auto works well)
+$ProcessingMode = 'Auto'      # Auto | Parallel | Sequential
+# If we run things in parallel, how many workers at the same time
+$ThrottleLimit = 8
+# These are the groups and their filename rules (regular expressions)
+$FileExpressions = @(
+    @{ group='Feeds';      expressions=@('^feed_.*\.csv$', '^orders_.*\.csv$') },
+    @{ group='Markers';    expressions=@('^\.(ready|done)$') },
+    @{ group='Invoices';   expressions=@('^invoice_.*\.csv$') },
+    @{ group='Reports';    expressions=@('^report_.*\.(csv|txt)$') }
 )
+# Do we also make an HTML report?
+$EnableHtmlOutput = $true
+# Where to write the HTML report
+$HtmlOutputPath = Join-Path -Path $PSScriptRoot -ChildPath 'FileZillaReport.html'
 
-# ---- Configure groups here: groupName => array of regex patterns (regex, case-insensitive) ----
-$groups = @{
-    "Invoices" = @("INV_\d{8}\.csv$",".*\.xml$")
-    "Backups"  = @(".*\.tar\.gz$","^backup_.*\.zip$")
+# Make PowerShell strict and fail fast so problems are clear
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# Turn a timestamp at the start of a log line into a DateTime we can use
+function Convert-LogTimestampToDateTime {
+    param([string]$Line)
+    # The first 19 characters look like 2025-09-10 10:02:13
+    $prefix = $Line.Substring(0,19)
+    # Parse it so PowerShell understands it is a date and time
+    [datetime]::ParseExact($prefix, 'yyyy-MM-dd HH:mm:ss', $null)
 }
-# -----------------------------------------------------------------------------------------------
 
-if (-not (Test-Path $LogFile)) { Write-Error "Log file not found: $LogFile"; exit 1 }
+# Find only the lines between our start and end markers (the area that lists files)
+function Get-ListingLines {
+    param([string[]]$Lines)
+    # This is where the listing starts (we are in the /data/inbound folder)
+    $startMarker = 'Response:  Current directory is: "/data/inbound"'
+    # This is where the listing stops
+    $endMarker = 'Status:    Listing completed'
 
-# ---------- Step 1: Extract file listing lines for the target directory ----------
-$files = [System.Collections.Generic.List[object]]::new()
-$inside = $false
-$targetEscaped = [regex]::Escape($TargetDir)
+    # Find the first line number that matches the start marker
+    $startIdx = ($Lines | Select-String -SimpleMatch -Pattern $startMarker | Select-Object -First 1).LineNumber
+    if (-not $startIdx) { throw "Start marker not found: $startMarker" }
+    # Find the first line number that matches the end marker
+    $endIdx = ($Lines | Select-String -SimpleMatch -Pattern $endMarker | Select-Object -First 1).LineNumber
+    if (-not $endIdx) { throw "End marker not found: $endMarker" }
+    # The end must come after the start or it is broken
+    if ($endIdx -le $startIdx) { throw 'Invalid range: end occurs before start' }
 
-foreach ($rawLine in [System.IO.File]::ReadLines($LogFile)) {
-    # normalize line (remove leading '< ' or '> ' that may appear in FileZilla logs)
-    $line = $rawLine -replace '^[<>]\s*',''
-    if (-not $inside) {
-        if ($line -match "Listing directory\s+$targetEscaped") {
-            $inside = $true
+    # Take the slice of lines from just after start to just before end
+    $slice = $Lines[($startIdx-1)..($endIdx-2)]
+    return $slice
+}
+
+# Read one listing line like "Listing: -rw-r--r-- ... 524288 Sep 10 10:00 feed_20250910_1000.csv"
+# and turn it into an object with Name, SizeBytes, IsDirectory, and LastModified
+function Parse-ListingLine {
+    param([string]$Line)
+    # This pattern understands the usual "ls -la" style from FileZilla logs
+    $pattern = '^(?:\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+)?(?:Listing:|Response:)\s+(?<perm>[d\-][rwx\-]{9})\s+\d+\s+\S+\s+\S+\s+(?<size>\d+)\s+(?<mon>\w{3})\s+(?<day>\d{1,2})\s+(?<time>\d{2}:\d{2}|\d{4})\s+(?<name>.+)$'
+    $m = [regex]::Match($Line, $pattern)
+    # If the line doesn't match, we ignore it
+    if (-not $m.Success) { return $null }
+
+    # Figure out if it is a folder (directory) or a file
+    $isDir = $m.Groups['perm'].Value.StartsWith('d')
+    # Read the size in bytes
+    $size = [int64]$m.Groups['size'].Value
+    # Read the file name
+    $name = $m.Groups['name'].Value.Trim()
+
+    # Some lines have a date at the very beginning; if present we use it
+    $hasTs = $Line.Length -ge 19 -and $Line[4] -eq '-' -and $Line[7] -eq '-' -and $Line[10] -eq ' '
+    if ($hasTs) { $logDate = Convert-LogTimestampToDateTime -Line $Line } else { $logDate = Get-Date }
+
+    # We rebuild a full date/time from the month/day/time found in the line
+    $year = $logDate.Year
+    $monthName = $m.Groups['mon'].Value
+    $day = [int]$m.Groups['day'].Value
+    $timeToken = $m.Groups['time'].Value
+
+    # If we see HH:mm we build hour and minute; if we see a year we only use midnight
+    if ($timeToken.Length -eq 5) {
+        $dtString = '{0} {1} {2} {3}:{4}:00' -f $year, $monthName, $day, $timeToken.Substring(0,2), $timeToken.Substring(3,2)
+        $lastModified = [datetime]::ParseExact($dtString, 'yyyy MMM d HH:mm:ss', $null)
+    } else {
+        $dtString = '{0} {1} {2} 00:00:00' -f $timeToken, $monthName, $day
+        $lastModified = [datetime]::ParseExact($dtString, 'yyyy MMM d HH:mm:ss', $null)
+    }
+
+    # Return a simple object that holds the important data
+    [pscustomobject]@{ Name=$name; SizeBytes=$size; IsDirectory=$isDir; LastModified=$lastModified }
+}
+
+# Safely turn special characters into HTML-friendly text
+function HtmlEncode {
+    param([string]$s)
+    if ($null -eq $s) { return '' }
+    $t = $s -replace '&','&amp;'
+    $t = $t -replace '<','&lt;'
+    $t = $t -replace '>','&gt;'
+    $t = $t -replace '"','&quot;'
+    $t = $t -replace "'","&#39;"
+    return $t
+}
+
+# Read the whole log file as text
+$raw = Get-Content -LiteralPath $LogPath -Raw -ErrorAction Stop -Encoding UTF8
+# Split the text into many lines and remove empty ones
+$lines = $raw -split "\r?\n" | Where-Object { $_ -ne '' }
+# Keep only the part of the log that lists files
+$rangeLines = Get-ListingLines -Lines $lines
+# Parse each listing line into a file object
+$parsedItems = New-Object System.Collections.Generic.List[object]
+foreach ($ln in $rangeLines) { $item = Parse-ListingLine -Line $ln; if ($item) { [void]$parsedItems.Add($item) } }
+# Keep only files (ignore folders)
+$files = $parsedItems | Where-Object { $_ -and -not $_.IsDirectory }
+# Count how many files we have
+$filesCount = ($files | Measure-Object).Count
+
+# If the user asked for only the latest N days, keep those days
+if ($DaysToProcess -gt 0) {
+    # Group files by date only (no time), newest first
+    $byDay = $files | Group-Object { $_.LastModified.Date } | Sort-Object Name -Descending
+    # Pick the first N days and remember those dates
+    $selectedDays = @()
+    foreach ($g in ($byDay | Select-Object -First $DaysToProcess)) { $selectedDays += $g.Group[0].LastModified.Date }
+    # Keep files that belong to the selected days
+    $files = $files | Where-Object { $selectedDays -contains $_.LastModified.Date }
+}
+
+# Build the groups and their regular expressions so we can test file names
+$exprGroups = New-Object System.Collections.Generic.List[object]
+foreach ($fx in $FileExpressions) {
+    # Collect patterns and group name no matter if we were given hashtables or objects
+    $patterns = @(); $groupName = $null
+    if ($fx -is [hashtable]) {
+        if ($fx.ContainsKey('expressions')) { $patterns = @($fx['expressions']) } elseif ($fx.ContainsKey('expression')) { $patterns = @($fx['expression']) }
+        if ($fx.ContainsKey('group')) { $groupName = [string]$fx['group'] }
+    } else { if ($fx.PSObject.Properties['expressions']) { $patterns = @($fx.expressions) } elseif ($fx.PSObject.Properties['expression']) { $patterns = @($fx.expression) }; if ($fx.PSObject.Properties['group']) { $groupName = [string]$fx.group } }
+    # Flatten nested arrays so we just have a simple list of strings
+    $flat = @(); foreach ($p in $patterns) { if ($p -is [System.Array]) { $flat += $p } else { $flat += $p } }
+    # If we have a good group name and at least one pattern, make regex objects
+    if ($groupName -and $flat.Count -gt 0) {
+        $regexes = New-Object System.Collections.Generic.List[object]
+        foreach ($pat in $flat) { [void]$regexes.Add([pscustomobject]@{ Pattern=[string]$pat; Regex=[regex]::new([string]$pat, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase) }) }
+        [void]$exprGroups.Add([pscustomobject]@{ Group=$groupName; Regexes=$regexes })
+    }
+}
+
+# Print a short header so we know what file was used and how many files we saw
+Write-Output '=== FileZilla SFTP Listing Processing ==='
+Write-Output ("Log: {0}" -f $LogPath)
+Write-Output ("Files parsed (excluding directories): {0}" -f $filesCount)
+Write-Output ("Groups configured: {0}" -f (($exprGroups | ForEach-Object { $_.Group }) -join ', '))
+Write-Output ''
+
+# Put files into each group if they match any pattern for that group
+$grouped = @{}
+function Add-ToGroup { param($groupName, $fileObj) if (-not $grouped.ContainsKey($groupName)) { $grouped[$groupName] = New-Object System.Collections.Generic.List[object] }; [void]$grouped[$groupName].Add($fileObj) }
+foreach ($f in $files) { foreach ($grp in $exprGroups) { $hit=$false; foreach ($rxObj in $grp.Regexes) { if ($rxObj.Regex.IsMatch($f.Name)) { $hit=$true; break } }; if ($hit) { Add-ToGroup -groupName $grp.Group -fileObj $f } } }
+# If no files matched any group, tell the user and stop
+if ($grouped.Count -eq 0) { Write-Output 'No groups matched any files.'; return }
+
+# Make a table for each group; every row corresponds to one pattern in that group
+# We show latest file name and size, oldest (previous day) file name and size, and difference as %
+$allGroupTables = New-Object System.Collections.Generic.List[object]
+foreach ($grp in $exprGroups) {
+    $groupName = $grp.Group
+
+    # Safely turn our stored list (which is a .NET List) into a PowerShell array
+    $itemsAll = @()
+    if ($grouped.ContainsKey($groupName)) { $tmpList = $grouped[$groupName]; foreach ($e in $tmpList) { $itemsAll += $e } }
+    # Sort newest to oldest by time
+    $itemsAll = @($itemsAll | Sort-Object LastModified -Descending)
+
+    # Tell the console which group we are showing
+    Write-Output ("{0}:" -f $groupName)
+
+    # Build rows for this group
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($rxObj in $grp.Regexes) {
+        # Only files that match this pattern
+        $subset = @($itemsAll | Where-Object { $rxObj.Regex.IsMatch($_.Name) })
+        # If none found, add an empty row so the table shape doesn’t break
+        if (($subset | Measure-Object).Count -eq 0) {
+            [void]$rows.Add([pscustomobject]@{ filelatest=''; sizelatest=''; filelastday=''; sizeold=''; diff=0; diffPct='' })
             continue
         }
-    } else {
-        # stop if next listing starts
-        if ($line -match '^\s*Listing directory\b') { break }
-
-        # typical ls -l style row begins with permission bits: -rw-r--r-- or drwxr-xr-x etc.
-        if ($line -match '^\s*[-dlpscb]') {
-            $parts = $line -split '\s+'
-            if ($parts.Length -ge 9) {
-                # unix ls -l assumed: perms, links, owner, group, size, month, day, time/year, name...
-                $size = 0
-                [long]::TryParse($parts[4], [ref]$size) | Out-Null
-                $month = $parts[5]; $day = $parts[6]; $timeOrYear = $parts[7]
-                $name = ($parts[8..($parts.Length-1)] -join ' ')
-                $files.Add([PSCustomObject]@{
-                    FileName = $name
-                    Size     = $size
-                    Modified = "$month $day $timeOrYear"
-                    RawLine  = $line
-                })
-            }
-        }
+        # Latest and oldest files for this pattern
+        $latest = $subset | Select-Object -First 1
+        $oldest = $subset | Select-Object -Last 1
+        # Calculate the size difference and percentage of change
+        $delta = $latest.SizeBytes - $oldest.SizeBytes
+        $pct = ''
+        if ($oldest.SizeBytes -ne 0) { $pct = ('{0}%' -f ([math]::Round(($delta/[double]$oldest.SizeBytes)*100,2))) } else { $pct = 'N/A' }
+        # Add a row with all the values we need
+        [void]$rows.Add([pscustomobject]@{
+            filelatest   = $latest.Name
+            sizelatest   = $latest.SizeBytes
+            filelastday  = $oldest.Name
+            sizeold      = $oldest.SizeBytes
+            diff         = $delta
+            diffPct      = $pct
+        })
     }
-}
 
-if ($files.Count -eq 0) {
-    Write-Host "No files found for $TargetDir in $LogFile"
-    exit 0
-}
-
-# ---------- Step 2: prepare flat list of (Group,Pattern) pairs ----------
-$patternList = @()
-foreach ($g in $groups.GetEnumerator()) {
-    foreach ($p in $g.Value) {
-        $patternList += [PSCustomObject]@{ Group = $g.Name; Pattern = $p }
+    # Print the table to the console with the columns in the right order
+    if (($rows | Measure-Object).Count -gt 0) {
+        $rows | Select-Object filelatest, sizelatest, filelastday, sizeold, diffPct | Format-Table -AutoSize
     }
+    # Add the rows to a collection we’ll use to build the HTML later
+    Write-Output ''
+    [void]$allGroupTables.Add([pscustomobject]@{ Group=$groupName; Rows=$rows })
 }
 
-# ---------- Step 3: perform matching (parallel on PS7+, optimized sequential on older PS) ----------
-$results = @()
+# Build a single big HTML table where each group has a wide header row
+# Then the column names row, then the data rows, then a spacer row, and repeat for each group
+if ($EnableHtmlOutput) {
+    # This CSS controls how the HTML looks (colors, spacing, fonts)
+    $css = @"
+    <style>
+      body { font-family: Segoe UI, Tahoma, Arial, sans-serif; margin: 20px; }
+      h1 { font-size: 20px; }
+      table { border-collapse: collapse; width: 100%; table-layout: auto; }
+      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; white-space: normal; overflow: visible; }
+      th { background: #f5f5f5; }
+      .meta { color: #666; font-size: 12px; margin-bottom: 8px; }
+      .groupHeader { background: #e9f1ff; }
+      .groupHeader th { background: #d0e4ff; font-size: 18px; font-weight: 700; text-align: center; vertical-align: middle; padding: 10px 8px; }
+      .spacer td { border: 0; padding: 10px 0; }
+      .pos { color: #085; }
+      .neg { color: #b00; }
+    </style>
+"@
 
-if ($PSVersionTable.PSVersion.Major -ge 7) {
-    # PowerShell 7+ - use ForEach-Object -Parallel (runspaces) - returns objects back to main process
-    $results = $patternList | ForEach-Object -Parallel {
-        param($entry)
-        $out = @()
-        foreach ($f in $using:files) {
-            if ([regex]::IsMatch($f.FileName, $entry.Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
-                $out += [PSCustomObject]@{
-                    Group = $entry.Group
-                    Pattern = $entry.Pattern
-                    FileName = $f.FileName
-                    Size = $f.Size
-                    Modified = $f.Modified
-                }
-            }
+    # Start building the HTML parts
+    $html = @()
+    $html += '<!DOCTYPE html>'
+    $html += '<html><head><meta charset="utf-8"/><title>FileZilla Report</title>'
+    $html += $css
+    $html += '</head><body>'
+    $html += ('<h1>FileZilla SFTP Listing Report</h1>')
+    $html += ("<div class='meta'>Log: {0} | Files parsed: {1}</div>" -f (HtmlEncode $LogPath), $filesCount)
+
+    # One table that contains all groups, one after another
+    $html += '<table>'
+    $html += '<tbody>'
+
+    foreach ($gt in $allGroupTables) {
+        # A full-width row to show the group name big and centered
+        $html += '<tr class="groupHeader"><th colspan="5">' + (HtmlEncode $gt.Group) + '</th></tr>'
+        # The column labels
+        $html += '<tr><th>filelatest</th><th>sizelatest</th><th>filelastday</th><th>sizeold</th><th>diff%</th></tr>'
+        # The data rows for this group
+        foreach ($r in $gt.Rows) {
+            $cls = if ($r.diff -ge 0) { 'pos' } else { 'neg' }
+            $html += ('<tr><td>{0}</td><td>{1}</td><td>{2}</td><td>{3}</td><td class="{5}">{4}</td></tr>' -f 
+                (HtmlEncode ([string]$r.filelatest)),
+                (HtmlEncode ([string]$r.sizelatest)),
+                (HtmlEncode ([string]$r.filelastday)),
+                (HtmlEncode ([string]$r.sizeold)),
+                (HtmlEncode ([string]$r.diffPct)),
+                $cls)
         }
-        $out
-    } -ThrottleLimit $MaxDegreeOfParallelism
-} else {
-    # PowerShell 5.1 or older - compile regexes and run sequentially (compiled regex is much faster for many matches)
-    foreach ($entry in $patternList) {
-        $rx = New-Object System.Text.RegularExpressions.Regex($entry.Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled)
-        foreach ($f in $files) {
-            if ($rx.IsMatch($f.FileName)) {
-                $results += [PSCustomObject]@{
-                    Group = $entry.Group
-                    Pattern = $entry.Pattern
-                    FileName = $f.FileName
-                    Size = $f.Size
-                    Modified = $f.Modified
-                }
-            }
-        }
+        # A blank row to separate one group from the next
+        $html += '<tr class="spacer"><td colspan="5"></td></tr>'
     }
+
+    # Close the table and the page
+    $html += '</tbody></table>'
+    $html += '</body></html>'
+
+    # Join everything into one big string and write the file
+    $htmlString = [string]::Join([Environment]::NewLine, $html)
+    $htmlString | Out-File -LiteralPath $HtmlOutputPath -Encoding UTF8 -Force
+    # Tell the user where the HTML file is
+    Write-Output ("HTML report written to: {0}" -f $HtmlOutputPath)
 }
 
-# ---------- Step 4: print grouped result: Group -> Pattern -> matched files ----------
-if (-not $results) {
-    Write-Host "No matches found for configured groups/patterns."
-    exit 0
-}
-
-$results | Group-Object -Property Group | ForEach-Object {
-    $groupName = $_.Name
-    Write-Host "=== Group: $groupName ==="
-    ($_.Group | Group-Object -Property Pattern) | ForEach-Object {
-        $pattern = $_.Name
-        $count = ($_.Group).Count
-        Write-Host " Pattern: $pattern -> $count matches"
-        foreach ($m in $_.Group) {
-            Write-Host "   $($m.FileName) | size: $($m.Size) | modified: $($m.Modified)"
-        }
-    }
-    Write-Host ""
-}
