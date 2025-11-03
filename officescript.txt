@@ -31,7 +31,8 @@ function main(workbook: ExcelScript.Workbook): string {
     colSpan: number;
   }> = [];
 
-  mergedRanges.forEach((range: ExcelScript.Range) => {
+  for (let i = 0; i < mergedRanges.length; i++) {
+    const range: ExcelScript.Range = mergedRanges[i];
     const addr: string = range.getAddress();
     const rowIdx: number = range.getRowIndex() - startRow;
     const colIdx: number = range.getColumnIndex() - startCol;
@@ -53,7 +54,7 @@ function main(workbook: ExcelScript.Workbook): string {
         }
       }
     }
-  });
+  }
 
   // Build HTML
   let html: string = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>';
