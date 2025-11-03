@@ -3,7 +3,7 @@ function main(workbook: ExcelScript.Workbook): string {
   const sheet: ExcelScript.Worksheet = workbook.getActiveWorksheet();
   
   // Get the used range
-  const usedRange: ExcelScript.Range = sheet.getUsedRange();
+  const usedRange: ExcelScript.Range | undefined = sheet.getUsedRange();
   if (!usedRange) {
     return "<html><body><p>No data found in sheet</p></body></html>";
   }
@@ -15,9 +15,9 @@ function main(workbook: ExcelScript.Workbook): string {
 
   // Track merged cells to skip them later
   const mergedCells: boolean[][] = [];
-  for (let i = 0; i < rowCount; i++) {
+  for (let i: number = 0; i < rowCount; i++) {
     mergedCells[i] = [];
-    for (let j = 0; j < colCount; j++) {
+    for (let j: number = 0; j < colCount; j++) {
       mergedCells[i][j] = false;
     }
   }
@@ -31,9 +31,9 @@ function main(workbook: ExcelScript.Workbook): string {
     colSpan: number;
   }> = [];
 
-  for (let i = 0; i < mergedRanges.length; i++) {
+  // Process merged ranges
+  for (let i: number = 0; i < mergedRanges.length; i++) {
     const range: ExcelScript.Range = mergedRanges[i];
-    const addr: string = range.getAddress();
     const rowIdx: number = range.getRowIndex() - startRow;
     const colIdx: number = range.getColumnIndex() - startCol;
     const rows: number = range.getRowCount();
@@ -47,8 +47,8 @@ function main(workbook: ExcelScript.Workbook): string {
     });
 
     // Mark cells as merged
-    for (let r = rowIdx; r < rowIdx + rows; r++) {
-      for (let c = colIdx; c < colIdx + cols; c++) {
+    for (let r: number = rowIdx; r < rowIdx + rows; r++) {
+      for (let c: number = colIdx; c < colIdx + cols; c++) {
         if (r !== rowIdx || c !== colIdx) {
           mergedCells[r][c] = true;
         }
@@ -63,13 +63,13 @@ function main(workbook: ExcelScript.Workbook): string {
   html += '</style></head><body><table>';
 
   // Process each row
-  for (let r = 0; r < rowCount; r++) {
+  for (let r: number = 0; r < rowCount; r++) {
     const rowRange: ExcelScript.Range = sheet.getRangeByIndexes(startRow + r, startCol, 1, colCount);
     const rowHeight: number = rowRange.getRowHeight();
     
     html += '<tr style="height:' + rowHeight + 'px;">';
 
-    for (let c = 0; c < colCount; c++) {
+    for (let c: number = 0; c < colCount; c++) {
       // Skip if this cell is part of a merge (but not the starting cell)
       if (mergedCells[r][c]) {
         continue;
@@ -84,7 +84,8 @@ function main(workbook: ExcelScript.Workbook): string {
       // Check if this cell is the start of a merged range
       let rowSpan: number = 1;
       let colSpan: number = 1;
-      for (const merge of mergedData) {
+      for (let m: number = 0; m < mergedData.length; m++) {
+        const merge = mergedData[m];
         if (merge.rowStart === r && merge.colStart === c) {
           rowSpan = merge.rowSpan;
           colSpan = merge.colSpan;
@@ -96,7 +97,8 @@ function main(workbook: ExcelScript.Workbook): string {
       let style: string = 'width:' + colWidth + 'px;';
       
       // Background color
-      const bgColor: string = format.getFill().getColor();
+      const fill: ExcelScript.RangeFill = format.getFill();
+      const bgColor: string = fill.getColor();
       if (bgColor && bgColor.toUpperCase() !== '#FFFFFF') {
         style += 'background-color:' + bgColor + ';';
       }
