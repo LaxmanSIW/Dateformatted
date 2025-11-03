@@ -1,367 +1,194 @@
-/**
- * Office Script to convert Excel used range to HTML format with all formatting
- * Can be used in Power Automate
- */
-
 function main(workbook: ExcelScript.Workbook): string {
-  // Get the active worksheet
-  let worksheet = workbook.getActiveWorksheet();
+  // Get the active sheet
+  const sheet = workbook.getActiveWorksheet();
   
   // Get the used range
-  let usedRange = worksheet.getUsedRange();
-  
+  const usedRange = sheet.getUsedRange();
   if (!usedRange) {
-    return "<html><body><p>No data found in the worksheet.</p></body></html>";
+    return "<html><body><p>No data found in sheet</p></body></html>";
   }
-  
-  // Get all the cell values
-  let values = usedRange.getValues() as any[][];
-  
-  // Get formatting information for all cells
-  let rowCount = usedRange.getRowCount();
-  let columnCount = usedRange.getColumnCount();
-  
-  // Track merged cells - map of "row,col" to {rowspan, colspan}
-  let mergedCells = new Map<string, {rowspan: number, colspan: number}>();
-  
-  // Get all merged areas and track them
-  try {
-    let mergedAreas = usedRange.getMergedAreas();
-    let usedRangeStartRow = usedRange.getRowIndex();
-    let usedRangeStartCol = usedRange.getColumnIndex();
-    
-    for (let mergedArea of mergedAreas) {
-      let mergedRowCount = mergedArea.getRowCount();
-      let mergedColCount = mergedArea.getColumnCount();
-      
-      // Only track if it's actually a merge (more than 1 cell)
-      if (mergedRowCount > 1 || mergedColCount > 1) {
-        // Get the starting row and column relative to usedRange
-        let mergedAreaStartRow = mergedArea.getRowIndex();
-        let mergedAreaStartCol = mergedArea.getColumnIndex();
-        
-        // Calculate relative positions
-        let mergedStartRow = mergedAreaStartRow - usedRangeStartRow;
-        let mergedStartCol = mergedAreaStartCol - usedRangeStartCol;
-        
-        // Make sure the merged area is within our used range
-        if (mergedStartRow >= 0 && mergedStartRow < rowCount && 
-            mergedStartCol >= 0 && mergedStartCol < columnCount &&
-            mergedStartRow + mergedRowCount <= rowCount &&
-            mergedStartCol + mergedColCount <= columnCount) {
-          let key = `${mergedStartRow},${mergedStartCol}`;
-          mergedCells.set(key, {
-            rowspan: mergedRowCount,
-            colspan: mergedColCount
-          });
-          
-          // Mark all other cells in the merge as "skip" cells
-          for (let r = 0; r < mergedRowCount; r++) {
-            for (let c = 0; c < mergedColCount; c++) {
-              if (r !== 0 || c !== 0) { // Skip the top-left cell
-                let skipKey = `${mergedStartRow + r},${mergedStartCol + c}`;
-                mergedCells.set(skipKey, {rowspan: 0, colspan: 0}); // 0 means skip
-              }
-            }
-          }
-        }
-      }
+
+  const rowCount = usedRange.getRowCount();
+  const colCount = usedRange.getColumnCount();
+  const startRow = usedRange.getRowIndex();
+  const startCol = usedRange.getColumnIndex();
+
+  // Track merged cells to skip them later
+  const mergedCells: boolean[][] = [];
+  for (let i = 0; i < rowCount; i++) {
+    mergedCells[i] = [];
+    for (let j = 0; j < colCount; j++) {
+      mergedCells[i][j] = false;
     }
-  } catch (e) {
-    // If merged areas can't be retrieved, continue without merge support
   }
-  
-  // Start building HTML
-  let html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Excel Export</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-    }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-    }
-    td, th {
-      border: 1px solid #ddd;
-      padding: 8px;
-      text-align: left;
-    }
-  </style>
-</head>
-<body>
-  <table>`;
-  
-  // Process each cell
-  for (let row = 0; row < rowCount; row++) {
-    html += "    <tr>\n";
+
+  // Get all merged ranges in the used range
+  const mergedRanges = usedRange.getMergedAreas();
+  const mergedData: Array<{
+    rowStart: number;
+    colStart: number;
+    rowSpan: number;
+    colSpan: number;
+  }> = [];
+
+  mergedRanges.forEach(range => {
+    const addr = range.getAddress();
+    const rowIdx = range.getRowIndex() - startRow;
+    const colIdx = range.getColumnIndex() - startCol;
+    const rows = range.getRowCount();
+    const cols = range.getColumnCount();
     
-    for (let col = 0; col < columnCount; col++) {
-      let cellKey = `${row},${col}`;
-      let mergeInfo = mergedCells.get(cellKey);
-      
-      // Skip cells that are part of a merge but not the top-left cell
-      if (mergeInfo && mergeInfo.rowspan === 0 && mergeInfo.colspan === 0) {
-        continue; // Skip this cell
-      }
-      
-      let cell = usedRange.getCell(row, col);
-      let cellValue = values[row][col];
-      
-      // Get cell formatting
-      let format = cell.getFormat();
-      let font = format.getFont();
-      let fill = format.getFill();
-      let borders = format.getBorders();
-      
-      // Get background color (handle transparent/no fill)
-      let bgColorHex = "#FFFFFF"; // Default white
-      try {
-        let fillColor = fill.getColor();
-        if (fillColor && fillColor !== "None" && fillColor !== "") {
-          bgColorHex = rgbToHex(fillColor);
-        }
-      } catch (e) {
-        // If fill color can't be retrieved, use default
-        bgColorHex = "#FFFFFF";
-      }
-      
-      // Get font color (handle default/auto colors)
-      let fontColorHex = "#000000"; // Default black
-      try {
-        let fontColor = font.getColor();
-        if (fontColor && fontColor !== "None" && fontColor !== "" && fontColor !== "Automatic") {
-          fontColorHex = rgbToHex(fontColor);
-        }
-      } catch (e) {
-        // If font color can't be retrieved, use default
-        fontColorHex = "#000000";
-      }
-      
-      // Get font properties
-      let fontName = font.getName();
-      let fontSize = font.getSize();
-      let isBold = font.getBold();
-      let isItalic = font.getItalic();
-      let isUnderline = font.getUnderline() !== ExcelScript.RangeUnderlineStyle.none;
-      let isStrikethrough = font.getStrikethrough();
-      
-      // Get text alignment
-      let horizontalAlignment = format.getHorizontalAlignment();
-      let verticalAlignment = format.getVerticalAlignment();
-      
-      // Get text wrap
-      let wrapText = format.getWrapText();
-      
-      // Get indentation level
-      let indentLevel = 0;
-      try {
-        indentLevel = format.getIndentLevel();
-      } catch (e) {
-        // Indent level might not be available, use 0
-      }
-      
-      // Get border styles
-      let borderTop = borders.getEdge(ExcelScript.BorderEdge.top);
-      let borderBottom = borders.getEdge(ExcelScript.BorderEdge.bottom);
-      let borderLeft = borders.getEdge(ExcelScript.BorderEdge.left);
-      let borderRight = borders.getEdge(ExcelScript.BorderEdge.right);
-      
-      // Build style string
-      let style = `background-color: ${bgColorHex}; `;
-      style += `color: ${fontColorHex}; `;
-      style += `font-family: ${fontName}; `;
-      style += `font-size: ${fontSize}pt; `;
-      
-      if (isBold) style += "font-weight: bold; ";
-      if (isItalic) style += "font-style: italic; ";
-      if (isUnderline) style += "text-decoration: underline; ";
-      if (isStrikethrough) style += "text-decoration: line-through; ";
-      
-      // Add text alignment
-      if (horizontalAlignment === ExcelScript.HorizontalAlignment.center) {
-        style += "text-align: center; ";
-      } else if (horizontalAlignment === ExcelScript.HorizontalAlignment.right) {
-        style += "text-align: right; ";
-      } else {
-        style += "text-align: left; ";
-      }
-      
-      if (verticalAlignment === ExcelScript.VerticalAlignment.center) {
-        style += "vertical-align: middle; ";
-      } else if (verticalAlignment === ExcelScript.VerticalAlignment.bottom) {
-        style += "vertical-align: bottom; ";
-      } else {
-        style += "vertical-align: top; ";
-      }
-      
-      // Add text wrap
-      if (wrapText) {
-        style += "white-space: normal; word-wrap: break-word; ";
-      } else {
-        style += "white-space: nowrap; ";
-      }
-      
-      // Add indentation (1 indent level ≈ 3 characters ≈ 15px)
-      if (indentLevel > 0) {
-        let indentPx = indentLevel * 15;
-        style += `padding-left: ${indentPx}px; `;
-      }
-      
-      // Add border styles
-      let borderStyle = "";
-      try {
-        if (borderTop.getStyle() !== ExcelScript.BorderLineStyle.none) {
-          let topColor = borderTop.getColor();
-          if (topColor && topColor !== "None" && topColor !== "") {
-            borderStyle += `border-top: ${getBorderWidth(borderTop)}px solid ${rgbToHex(topColor)}; `;
-          }
-        }
-        if (borderBottom.getStyle() !== ExcelScript.BorderLineStyle.none) {
-          let bottomColor = borderBottom.getColor();
-          if (bottomColor && bottomColor !== "None" && bottomColor !== "") {
-            borderStyle += `border-bottom: ${getBorderWidth(borderBottom)}px solid ${rgbToHex(bottomColor)}; `;
-          }
-        }
-        if (borderLeft.getStyle() !== ExcelScript.BorderLineStyle.none) {
-          let leftColor = borderLeft.getColor();
-          if (leftColor && leftColor !== "None" && leftColor !== "") {
-            borderStyle += `border-left: ${getBorderWidth(borderLeft)}px solid ${rgbToHex(leftColor)}; `;
-          }
-        }
-        if (borderRight.getStyle() !== ExcelScript.BorderLineStyle.none) {
-          let rightColor = borderRight.getColor();
-          if (rightColor && rightColor !== "None" && rightColor !== "") {
-            borderStyle += `border-right: ${getBorderWidth(borderRight)}px solid ${rgbToHex(rightColor)}; `;
-          }
-        }
-      } catch (e) {
-        // If border styles can't be retrieved, continue without them
-      }
-      
-      style += borderStyle;
-      
-      // Get cell content with proper formatting (use getText() to get formatted display value)
-      let cellContent = "";
-      try {
-        // Try to get the formatted text (this preserves number formats, dates, etc.)
-        let formattedText = cell.getText();
-        if (formattedText !== null && formattedText !== undefined) {
-          cellContent = String(formattedText).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        } else if (cellValue === null || cellValue === undefined) {
-          cellContent = "";
-        } else if (typeof cellValue === "number") {
-          // Fallback: check if it's a date
-          let numberFormat = format.getNumberFormat();
-          if (numberFormat && (numberFormat.indexOf("d") >= 0 || numberFormat.indexOf("m") >= 0 || numberFormat.indexOf("y") >= 0)) {
-            // For dates, we'll use the raw value as fallback
-            // (getText() should have handled it, but just in case)
-            cellContent = cellValue.toString();
-          } else {
-            cellContent = cellValue.toString();
-          }
-        } else {
-          cellContent = String(cellValue).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        }
-      } catch (e) {
-        // If getText() fails, fall back to raw value
-        if (cellValue === null || cellValue === undefined) {
-          cellContent = "";
-        } else {
-          cellContent = String(cellValue).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    mergedData.push({
+      rowStart: rowIdx,
+      colStart: colIdx,
+      rowSpan: rows,
+      colSpan: cols
+    });
+
+    // Mark cells as merged
+    for (let r = rowIdx; r < rowIdx + rows; r++) {
+      for (let c = colIdx; c < colIdx + cols; c++) {
+        if (r !== rowIdx || c !== colIdx) {
+          mergedCells[r][c] = true;
         }
       }
-      
-      // Determine if it's a header row (first row)
-      let tag = row === 0 ? "th" : "td";
-      
-      // Add colspan and rowspan if cell is merged
-      let mergeAttributes = "";
-      if (mergeInfo && mergeInfo.rowspan > 0 && mergeInfo.colspan > 0) {
-        if (mergeInfo.rowspan > 1) {
-          mergeAttributes += ` rowspan="${mergeInfo.rowspan}"`;
-        }
-        if (mergeInfo.colspan > 1) {
-          mergeAttributes += ` colspan="${mergeInfo.colspan}"`;
-        }
-      }
-      
-      html += `      <${tag}${mergeAttributes} style="${style}">${cellContent}</${tag}>\n`;
     }
+  });
+
+  // Build HTML
+  let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>';
+  html += 'table{border-collapse:collapse;font-family:Calibri,sans-serif;}';
+  html += 'td{border:1px solid #d0d0d0;padding:2px 4px;white-space:pre-wrap;word-wrap:break-word;}';
+  html += '</style></head><body><table>';
+
+  // Process each row
+  for (let r = 0; r < rowCount; r++) {
+    const rowRange = sheet.getRangeByIndexes(startRow + r, startCol, 1, colCount);
+    const rowHeight = rowRange.getRowHeight();
     
-    html += "    </tr>\n";
+    html += '<tr style="height:' + rowHeight + 'px;">';
+
+    for (let c = 0; c < colCount; c++) {
+      // Skip if this cell is part of a merge (but not the starting cell)
+      if (mergedCells[r][c]) {
+        continue;
+      }
+
+      const cell = sheet.getCell(startRow + r, startCol + c);
+      const format = cell.getFormat();
+      
+      // Get cell dimensions
+      const colWidth = sheet.getRangeByIndexes(startRow, startCol + c, 1, 1).getColumnWidth();
+
+      // Check if this cell is the start of a merged range
+      let rowSpan = 1;
+      let colSpan = 1;
+      for (const merge of mergedData) {
+        if (merge.rowStart === r && merge.colStart === c) {
+          rowSpan = merge.rowSpan;
+          colSpan = merge.colSpan;
+          break;
+        }
+      }
+
+      // Build cell style
+      let style = 'width:' + colWidth + 'px;';
+      
+      // Background color
+      const bgColor = format.getFill().getColor();
+      if (bgColor && bgColor.toUpperCase() !== '#FFFFFF') {
+        style += 'background-color:' + bgColor + ';';
+      }
+
+      // Font properties
+      const font = format.getFont();
+      style += 'font-size:' + font.getSize() + 'pt;';
+      style += 'color:' + font.getColor() + ';';
+      style += 'font-family:' + font.getName() + ';';
+      
+      if (font.getBold()) {
+        style += 'font-weight:bold;';
+      }
+      if (font.getItalic()) {
+        style += 'font-style:italic;';
+      }
+      if (font.getUnderline() !== 'None') {
+        style += 'text-decoration:underline;';
+      }
+
+      // Horizontal alignment
+      const hAlign = format.getHorizontalAlignment();
+      if (hAlign === 'Center') {
+        style += 'text-align:center;';
+      } else if (hAlign === 'Right') {
+        style += 'text-align:right;';
+      } else if (hAlign === 'Left') {
+        style += 'text-align:left;';
+      }
+
+      // Vertical alignment
+      const vAlign = format.getVerticalAlignment();
+      if (vAlign === 'Center') {
+        style += 'vertical-align:middle;';
+      } else if (vAlign === 'Top') {
+        style += 'vertical-align:top;';
+      } else if (vAlign === 'Bottom') {
+        style += 'vertical-align:bottom;';
+      }
+
+      // Borders
+      const borders = format.getRangeBorder('EdgeTop');
+      if (borders.getStyle() !== 'None') {
+        style += 'border-top:1px solid ' + borders.getColor() + ';';
+      }
+      const borderRight = format.getRangeBorder('EdgeRight');
+      if (borderRight.getStyle() !== 'None') {
+        style += 'border-right:1px solid ' + borderRight.getColor() + ';';
+      }
+      const borderBottom = format.getRangeBorder('EdgeBottom');
+      if (borderBottom.getStyle() !== 'None') {
+        style += 'border-bottom:1px solid ' + borderBottom.getColor() + ';';
+      }
+      const borderLeft = format.getRangeBorder('EdgeLeft');
+      if (borderLeft.getStyle() !== 'None') {
+        style += 'border-left:1px solid ' + borderLeft.getColor() + ';';
+      }
+
+      // Text wrapping
+      if (format.getWrapText()) {
+        style += 'white-space:pre-wrap;';
+      } else {
+        style += 'white-space:nowrap;overflow:hidden;';
+      }
+
+      // Get cell value (displayed text)
+      const displayValue = cell.getText();
+
+      // Build cell tag
+      let cellTag = '<td';
+      if (rowSpan > 1) {
+        cellTag += ' rowspan="' + rowSpan + '"';
+      }
+      if (colSpan > 1) {
+        cellTag += ' colspan="' + colSpan + '"';
+      }
+      cellTag += ' style="' + style + '">';
+      
+      // Escape HTML special characters
+      let cellContent = displayValue
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+      
+      cellTag += cellContent + '</td>';
+      html += cellTag;
+    }
+
+    html += '</tr>';
   }
-  
-  html += `  </table>
-</body>
-</html>`;
+
+  html += '</table></body></html>';
   
   return html;
 }
-
-/**
- * Convert RGB color to HEX
- * Office Scripts return colors in various formats
- */
-function rgbToHex(color: string): string {
-  if (!color || color === "" || color === "None" || color === "Automatic") {
-    return "#000000"; // Default to black for text, will be overridden for backgrounds
-  }
-  
-  // If already hex format
-  if (color.startsWith("#")) {
-    return color;
-  }
-  
-  // Handle RGB format: "RGB(255,255,255)" or "255,255,255"
-  if (color.startsWith("RGB(")) {
-    let rgbMatch = color.match(/RGB\((\d+),\s*(\d+),\s*(\d+)\)/);
-    if (rgbMatch) {
-      let r = parseInt(rgbMatch[1]);
-      let g = parseInt(rgbMatch[2]);
-      let b = parseInt(rgbMatch[3]);
-      return "#" + [r, g, b].map(x => {
-        const hex = x.toString(16);
-        return hex.length === 1 ? "0" + hex : hex;
-      }).join("");
-    }
-  }
-  
-  // Handle comma-separated RGB: "255,255,255"
-  let commaMatch = color.match(/^(\d+),\s*(\d+),\s*(\d+)$/);
-  if (commaMatch) {
-    let r = parseInt(commaMatch[1]);
-    let g = parseInt(commaMatch[2]);
-    let b = parseInt(commaMatch[3]);
-    return "#" + [r, g, b].map(x => {
-      const hex = x.toString(16);
-      return hex.length === 1 ? "0" + hex : hex;
-    }).join("");
-  }
-  
-  // Default if format is unknown
-  return color; // Return as-is, might be a named color
-}
-
-/**
- * Get border width based on style
- */
-function getBorderWidth(border: ExcelScript.RangeBorder): number {
-  let style = border.getStyle();
-  
-  switch (style) {
-    case ExcelScript.BorderLineStyle.thin:
-      return 1;
-    case ExcelScript.BorderLineStyle.medium:
-      return 2;
-    case ExcelScript.BorderLineStyle.thick:
-      return 3;
-    default:
-      return 1;
-  }
-}
-
