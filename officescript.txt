@@ -1,17 +1,17 @@
 function main(workbook: ExcelScript.Workbook): string {
   // Get the active sheet
-  const sheet = workbook.getActiveWorksheet();
+  const sheet: ExcelScript.Worksheet = workbook.getActiveWorksheet();
   
   // Get the used range
-  const usedRange = sheet.getUsedRange();
+  const usedRange: ExcelScript.Range = sheet.getUsedRange();
   if (!usedRange) {
     return "<html><body><p>No data found in sheet</p></body></html>";
   }
 
-  const rowCount = usedRange.getRowCount();
-  const colCount = usedRange.getColumnCount();
-  const startRow = usedRange.getRowIndex();
-  const startCol = usedRange.getColumnIndex();
+  const rowCount: number = usedRange.getRowCount();
+  const colCount: number = usedRange.getColumnCount();
+  const startRow: number = usedRange.getRowIndex();
+  const startCol: number = usedRange.getColumnIndex();
 
   // Track merged cells to skip them later
   const mergedCells: boolean[][] = [];
@@ -23,7 +23,7 @@ function main(workbook: ExcelScript.Workbook): string {
   }
 
   // Get all merged ranges in the used range
-  const mergedRanges = usedRange.getMergedAreas();
+  const mergedRanges: ExcelScript.Range[] = usedRange.getMergedAreas();
   const mergedData: Array<{
     rowStart: number;
     colStart: number;
@@ -31,12 +31,12 @@ function main(workbook: ExcelScript.Workbook): string {
     colSpan: number;
   }> = [];
 
-  mergedRanges.forEach(range => {
-    const addr = range.getAddress();
-    const rowIdx = range.getRowIndex() - startRow;
-    const colIdx = range.getColumnIndex() - startCol;
-    const rows = range.getRowCount();
-    const cols = range.getColumnCount();
+  mergedRanges.forEach((range: ExcelScript.Range) => {
+    const addr: string = range.getAddress();
+    const rowIdx: number = range.getRowIndex() - startRow;
+    const colIdx: number = range.getColumnIndex() - startCol;
+    const rows: number = range.getRowCount();
+    const cols: number = range.getColumnCount();
     
     mergedData.push({
       rowStart: rowIdx,
@@ -56,15 +56,15 @@ function main(workbook: ExcelScript.Workbook): string {
   });
 
   // Build HTML
-  let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>';
+  let html: string = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>';
   html += 'table{border-collapse:collapse;font-family:Calibri,sans-serif;}';
   html += 'td{border:1px solid #d0d0d0;padding:2px 4px;white-space:pre-wrap;word-wrap:break-word;}';
   html += '</style></head><body><table>';
 
   // Process each row
   for (let r = 0; r < rowCount; r++) {
-    const rowRange = sheet.getRangeByIndexes(startRow + r, startCol, 1, colCount);
-    const rowHeight = rowRange.getRowHeight();
+    const rowRange: ExcelScript.Range = sheet.getRangeByIndexes(startRow + r, startCol, 1, colCount);
+    const rowHeight: number = rowRange.getRowHeight();
     
     html += '<tr style="height:' + rowHeight + 'px;">';
 
@@ -74,15 +74,15 @@ function main(workbook: ExcelScript.Workbook): string {
         continue;
       }
 
-      const cell = sheet.getCell(startRow + r, startCol + c);
-      const format = cell.getFormat();
+      const cell: ExcelScript.Range = sheet.getCell(startRow + r, startCol + c);
+      const format: ExcelScript.RangeFormat = cell.getFormat();
       
       // Get cell dimensions
-      const colWidth = sheet.getRangeByIndexes(startRow, startCol + c, 1, 1).getColumnWidth();
+      const colWidth: number = sheet.getRangeByIndexes(startRow, startCol + c, 1, 1).getColumnWidth();
 
       // Check if this cell is the start of a merged range
-      let rowSpan = 1;
-      let colSpan = 1;
+      let rowSpan: number = 1;
+      let colSpan: number = 1;
       for (const merge of mergedData) {
         if (merge.rowStart === r && merge.colStart === c) {
           rowSpan = merge.rowSpan;
@@ -92,32 +92,39 @@ function main(workbook: ExcelScript.Workbook): string {
       }
 
       // Build cell style
-      let style = 'width:' + colWidth + 'px;';
+      let style: string = 'width:' + colWidth + 'px;';
       
       // Background color
-      const bgColor = format.getFill().getColor();
+      const bgColor: string = format.getFill().getColor();
       if (bgColor && bgColor.toUpperCase() !== '#FFFFFF') {
         style += 'background-color:' + bgColor + ';';
       }
 
       // Font properties
-      const font = format.getFont();
-      style += 'font-size:' + font.getSize() + 'pt;';
-      style += 'color:' + font.getColor() + ';';
-      style += 'font-family:' + font.getName() + ';';
+      const font: ExcelScript.RangeFont = format.getFont();
+      const fontSize: number = font.getSize();
+      const fontColor: string = font.getColor();
+      const fontName: string = font.getName();
+      const isBold: boolean = font.getBold();
+      const isItalic: boolean = font.getItalic();
+      const underline: string = font.getUnderline();
       
-      if (font.getBold()) {
+      style += 'font-size:' + fontSize + 'pt;';
+      style += 'color:' + fontColor + ';';
+      style += 'font-family:' + fontName + ';';
+      
+      if (isBold) {
         style += 'font-weight:bold;';
       }
-      if (font.getItalic()) {
+      if (isItalic) {
         style += 'font-style:italic;';
       }
-      if (font.getUnderline() !== 'None') {
+      if (underline !== 'None') {
         style += 'text-decoration:underline;';
       }
 
       // Horizontal alignment
-      const hAlign = format.getHorizontalAlignment();
+      const hAlign: string = format.getHorizontalAlignment();
       if (hAlign === 'Center') {
         style += 'text-align:center;';
       } else if (hAlign === 'Right') {
@@ -127,7 +134,7 @@ function main(workbook: ExcelScript.Workbook): string {
       }
 
       // Vertical alignment
-      const vAlign = format.getVerticalAlignment();
+      const vAlign: string = format.getVerticalAlignment();
       if (vAlign === 'Center') {
         style += 'vertical-align:middle;';
       } else if (vAlign === 'Top') {
@@ -137,35 +144,47 @@ function main(workbook: ExcelScript.Workbook): string {
       }
 
       // Borders
-      const borders = format.getRangeBorder('EdgeTop');
-      if (borders.getStyle() !== 'None') {
-        style += 'border-top:1px solid ' + borders.getColor() + ';';
+      const borderTop: ExcelScript.RangeBorder = format.getRangeBorder('EdgeTop');
+      const borderTopStyle: string = borderTop.getStyle();
+      if (borderTopStyle !== 'None') {
+        const borderTopColor: string = borderTop.getColor();
+        style += 'border-top:1px solid ' + borderTopColor + ';';
       }
-      const borderRight = format.getRangeBorder('EdgeRight');
-      if (borderRight.getStyle() !== 'None') {
-        style += 'border-right:1px solid ' + borderRight.getColor() + ';';
+      
+      const borderRight: ExcelScript.RangeBorder = format.getRangeBorder('EdgeRight');
+      const borderRightStyle: string = borderRight.getStyle();
+      if (borderRightStyle !== 'None') {
+        const borderRightColor: string = borderRight.getColor();
+        style += 'border-right:1px solid ' + borderRightColor + ';';
       }
-      const borderBottom = format.getRangeBorder('EdgeBottom');
-      if (borderBottom.getStyle() !== 'None') {
-        style += 'border-bottom:1px solid ' + borderBottom.getColor() + ';';
+      
+      const borderBottom: ExcelScript.RangeBorder = format.getRangeBorder('EdgeBottom');
+      const borderBottomStyle: string = borderBottom.getStyle();
+      if (borderBottomStyle !== 'None') {
+        const borderBottomColor: string = borderBottom.getColor();
+        style += 'border-bottom:1px solid ' + borderBottomColor + ';';
       }
-      const borderLeft = format.getRangeBorder('EdgeLeft');
-      if (borderLeft.getStyle() !== 'None') {
-        style += 'border-left:1px solid ' + borderLeft.getColor() + ';';
+      
+      const borderLeft: ExcelScript.RangeBorder = format.getRangeBorder('EdgeLeft');
+      const borderLeftStyle: string = borderLeft.getStyle();
+      if (borderLeftStyle !== 'None') {
+        const borderLeftColor: string = borderLeft.getColor();
+        style += 'border-left:1px solid ' + borderLeftColor + ';';
       }
 
       // Text wrapping
-      if (format.getWrapText()) {
+      const isWrapped: boolean = format.getWrapText();
+      if (isWrapped) {
         style += 'white-space:pre-wrap;';
       } else {
         style += 'white-space:nowrap;overflow:hidden;';
       }
 
       // Get cell value (displayed text)
-      const displayValue = cell.getText();
+      const displayValue: string = cell.getText();
 
       // Build cell tag
-      let cellTag = '<td';
+      let cellTag: string = '<td';
       if (rowSpan > 1) {
         cellTag += ' rowspan="' + rowSpan + '"';
       }
@@ -175,7 +194,7 @@ function main(workbook: ExcelScript.Workbook): string {
       cellTag += ' style="' + style + '">';
       
       // Escape HTML special characters
-      let cellContent = displayValue
+      let cellContent: string = displayValue
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
