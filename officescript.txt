@@ -65,7 +65,7 @@ function main(workbook: ExcelScript.Workbook): string {
   // Process each row
   for (let r: number = 0; r < rowCount; r++) {
     const rowRange: ExcelScript.Range = sheet.getRangeByIndexes(startRow + r, startCol, 1, colCount);
-    const rowHeight: number = rowRange.getRowHeight();
+    const rowHeight: number = rowRange.getFormat().getRowHeight();
     
     html += '<tr style="height:' + rowHeight + 'px;">';
 
@@ -79,7 +79,8 @@ function main(workbook: ExcelScript.Workbook): string {
       const format: ExcelScript.RangeFormat = cell.getFormat();
       
       // Get cell dimensions
-      const colWidth: number = sheet.getRangeByIndexes(startRow, startCol + c, 1, 1).getColumnWidth();
+      const colRange: ExcelScript.Range = sheet.getRangeByIndexes(startRow, startCol + c, 1, 1);
+      const colWidth: number = colRange.getFormat().getColumnWidth();
 
       // Check if this cell is the start of a merged range
       let rowSpan: number = 1;
