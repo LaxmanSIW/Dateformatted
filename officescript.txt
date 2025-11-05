@@ -1,4 +1,6 @@
 function main(workbook: ExcelScript.Workbook): string {
+
+  // Convert points (Excel) to pixels (HTML)
   function ptToPx(pt: number) {
     return Math.round(pt * 1.3333);
   }
@@ -7,6 +9,7 @@ function main(workbook: ExcelScript.Workbook): string {
   const usedRange = sheet.getUsedRange();
   if (!usedRange) return "No data found in sheet";
 
+  // Get cell values (1 API call for entire range)
   const values = usedRange.getValues();
   const totalRows = values.length;
   const totalCols = values[0].length;
@@ -14,11 +17,11 @@ function main(workbook: ExcelScript.Workbook): string {
   const usedTopRow = usedRange.getRowIndex();
   const usedLeftCol = usedRange.getColumnIndex();
 
-  // Batch row heights and column widths (still 1 call per row/col but unavoidable)
+  // Row heights and column widths (1 call per row/column, unavoidable)
   const rowHeights = Array.from({ length: totalRows }, (_, r) => usedRange.getRow(r).getHeight());
   const colWidths = Array.from({ length: totalCols }, (_, c) => usedRange.getColumn(c).getWidth());
 
-  // Batch ALL cell formatting (single call for entire usedRange)
+  // Fetch ALL formatting in a single sweep (Major optimization)
   const props = usedRange.getCellProperties({
     format: {
       horizontalAlignment: true,
@@ -35,14 +38,16 @@ function main(workbook: ExcelScript.Workbook): string {
     }
   });
 
-  // merged map detection (unchanged logic, this is cheap)
-  const mergedMap = new Map<string, {rowSpan:number,colSpan:number,isTopLeft:boolean}>();
+  // Detect merged cells and record spans
+  const mergedMap = new Map<string, { rowSpan: number; colSpan: number; isTopLeft: boolean }>();
   const mergedAreas = usedRange.getMergedAreas()?.getAreas() ?? [];
+
   mergedAreas.forEach(range => {
-    const r0 = range.getCell(0,0).getRowIndex() - usedTopRow;
-    const c0 = range.getCell(0,0).getColumnIndex() - usedLeftCol;
+    const r0 = range.getCell(0, 0).getRowIndex() - usedTopRow;
+    const c0 = range.getCell(0, 0).getColumnIndex() - usedLeftCol;
     const rs = range.getRowCount();
     const cs = range.getColumnCount();
+
     for (let r = r0; r < r0 + rs; r++) {
       for (let c = c0; c < c0 + cs; c++) {
         mergedMap.set(`${r},${c}`, {
@@ -54,7 +59,7 @@ function main(workbook: ExcelScript.Workbook): string {
     }
   });
 
-  // Build HTML
+  // Begin building HTML output
   const html: string[] = [];
   html.push("<table border='0' cellspacing='0' cellpadding='0'>");
 
@@ -64,30 +69,43 @@ function main(workbook: ExcelScript.Workbook): string {
     for (let c = 0; c < totalCols; c++) {
 
       const merge = mergedMap.get(`${r},${c}`);
+      // Skip non-top-left cells of merged blocks
       if (merge && !merge.isTopLeft) continue;
 
       const p = props[r][c].format;
       const style: string[] = [];
 
+      // Text styles
       if (p.font?.bold) style.push("font-weight:bold");
       if (p.font?.italic) style.push("font-style:italic");
-      if (p.font?.underline !== "None") style.push("text-decoration:underline");
+      if (p.font?.underline !== ExcelScript.RangeUnderlineStyle.none) style.push("text-decoration:underline");
       if (p.font?.size) style.push(`font-size:${ptToPx(p.font.size)}px`);
       if (p.font?.name) style.push(`font-family:${p.font.name}`);
       if (p.font?.color) style.push(`color:${p.font.color}`);
-      if (p.fill?.color) style.push(`background:${p.fill.color}`);
-      if (p.horizontalAlignment) style.push(`text-align:${p.horizontalAlignment.toLowerCase()}`);
-      if (p.verticalAlignment) style.push(`vertical-align:${p.verticalAlignment.toLowerCase()}`);
+
+      // Background fill
+      if (p.fill?.color) style.push(`background-color:${p.fill.color}`);
+
+      // Alignment (cast enum to string safely)
+      if (p.horizontalAlignment) style.push(`text-align:${String(p.horizontalAlignment).toLowerCase()}`);
+      if (p.verticalAlignment) style.push(`vertical-align:${String(p.verticalAlignment).toLowerCase()}`);
+
+      // Wrap text
       if (p.wrapText) style.push("white-space:normal");
+
+      // Set width
       style.push(`width:${ptToPx(colWidths[c])}px`);
 
+      // Borders (check against enum)
       const b = p.borders;
-      if (b?.top?.style !== "None") style.push(`border-top:1px solid ${b.top.color}`);
-      if (b?.right?.style !== "None") style.push(`border-right:1px solid ${b.right.color}`);
-      if (b?.bottom?.style !== "None") style.push(`border-bottom:1px solid ${b.bottom.color}`);
-      if (b?.left?.style !== "None") style.push(`border-left:1px solid ${b.left.color}`);
+      if (b?.top?.style !== ExcelScript.BorderLineStyle.none) style.push(`border-top:1px solid ${b.top.color}`);
+      if (b?.right?.style !== ExcelScript.BorderLineStyle.none) style.push(`border-right:1px solid ${b.right.color}`);
+      if (b?.bottom?.style !== ExcelScript.BorderLineStyle.none) style.push(`border-bottom:1px solid ${b.bottom.color}`);
+      if (b?.left?.style !== ExcelScript.BorderLineStyle.none) style.push(`border-left:1px solid ${b.left.color}`);
 
+      // Merge spans if present
       const span = merge ? ` rowspan="${merge.rowSpan}" colspan="${merge.colSpan}"` : "";
+
       html.push(`<td${span} style="${style.join(";")}">${values[r][c] ?? ""}</td>`);
     }
 
